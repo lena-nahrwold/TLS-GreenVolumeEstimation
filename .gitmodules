@@ -1,0 +1,3 @@
+[submodule "py-rct"]
+	path = py-rct
+	url = https://github.com/hagreven/py-rct.git
