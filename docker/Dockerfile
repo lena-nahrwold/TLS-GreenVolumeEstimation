@@ -43,8 +43,10 @@ RUN conda create -n pdal-env -c conda-forge -y \
       python=3.11 \
       pdal python-pdal \
       numpy pandas scipy scikit-learn tqdm \
-      laspy plyfile geopandas shapely \
+      laspy plyfile geopandas shapely open3d \
  && conda clean -afy
+
+ RUN pip install cloth-simulation-filter
     
 # Create a directory for building packages
 RUN mkdir -p /build && \
