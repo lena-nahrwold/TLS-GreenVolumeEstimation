@@ -11,6 +11,7 @@ from typing import List
 from glob import glob
 import subprocess
 import json
+import shutil
 
 import laspy
 import numpy as np
@@ -30,6 +31,7 @@ from calculate_green_volume import voxel_based_green_volume
 @dataclass
 class OrchestratorParams:
     output: Path = None
+    clear_segmentation_output: bool = False
 
     # CSF
     csf_input_path: Path = None
@@ -115,11 +117,23 @@ def parse_cli_args() -> OrchestratorParams:
     # voxelization arguments
     parser.add_argument("-v","--voxel-sizes", nargs="+", type=float, default=[0.1,0.2,0.3],
                     help="List of voxel sizes used for voxelization of the point cloud.")
+    
+    # TODO
+    parser.add_argument(
+        "--clear-segmentation-output",
+        action="store_true",
+        help=(
+            "If True, intermediate segmentation files are deleted after processing, "
+            "leaving only the final full segmentation results. "
+            "Enable this to save disk space."
+        )
+    )
 
     args = parser.parse_args()
 
     return OrchestratorParams(
         output=args.output,
+        clear_segmentation_output=args.clear_segmentation_output,
         pyrct_input_path=args.input, 
         pyrct_output_dir=args.output / "rct_leaf_wood",
         pyrct_gradient=args.gradient,
@@ -306,6 +320,12 @@ def main(params: OrchestratorParams):
         class_labels=[0,2], 
         area_size=area
     )
+
+    if params.clear_segmentation_output:
+        # Remove segmentation outputs
+        dirs_to_remove = [params.pyrct_output_dir, params.csf_output_dir]
+        for d in dirs_to_remove:
+            shutil.rmtree(d)
 
     print("\n" + "=" * 60)
     print("Pipeline Complete")
