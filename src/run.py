@@ -142,6 +142,67 @@ def parse_cli_args() -> OrchestratorParams:
         gv_voxel_sizes=args.voxel_sizes
     )
 
+def create_fully_segmented_point_cloud(ground_dir:str, non_ground_dir:str, merged_dir:str) -> str:
+    ground_files = glob(os.path.join(ground_dir, "*_ground.laz"))
+
+    merged_files = []
+
+    for gf in ground_files:
+        base_name = os.path.basename(gf).replace("_ground.laz", "")
+        ngf = os.path.join(non_ground_dir, f"{base_name}_non_ground.laz")
+
+        if not os.path.exists(ngf):
+            print(f"Skipping {base_name}, no matching non-ground file.")
+            continue
+
+        merged_file = os.path.join(merged_dir, f"{base_name}_merged.laz")
+
+        pipeline_dict = {
+            "pipeline": [
+                {
+                    "type": "readers.las",
+                    "filename": gf,
+                    "tag": "ground"
+                },
+                {
+                    "type": "readers.las",
+                    "filename": ngf,
+                    "tag": "nonground_raw"
+                },
+                {
+                    "type": "filters.assign",
+                    "assignment": "PredSemantic[0:0]=3",
+                    "inputs": ["nonground_raw"],
+                    "tag": "nonground"
+                },
+                {
+                    "type": "filters.merge",
+                    "inputs": ["ground", "nonground"],
+                    "tag": "merged"
+                },
+                {
+                    "type": "writers.las",
+                    "filename": merged_file,
+                    "inputs": ["merged"],
+                    "minor_version": 4,
+                    "extra_dims": "all"
+                }
+            ]
+        }
+
+        pipeline_json = json.dumps(pipeline_dict)
+
+        subprocess.run(
+            ["pdal", "pipeline", "--stdin"],
+            input=pipeline_json.encode(),
+            check=True
+        )
+
+        merged_files.append(merged_file)
+
+    return merged_files
+
+
 def main(params: OrchestratorParams):
     # ----------------------------------------------
     # Step 1: Run py-rct for leaf-wood segmentation
@@ -200,66 +261,25 @@ def main(params: OrchestratorParams):
             output_dir=params.csf_output_dir
         )
 
+    # -------------------------------------------
+    # Step 3: Create fully segmented point cloud
+    # -------------------------------------------
+
+    print("\n" + "=" * 60)
+    print("Merge segmentation results")
+    print("=" * 60)
+    
     # TODO
     ground_dir = os.path.join(params.csf_output_dir, "ground")
     non_ground_dir = os.path.join(params.csf_output_dir, "non_ground")
-    merged_dir = os.path.join(params.output, "results")
+    merged_dir = os.path.join(params.output, "results/segmented_laz")
     os.makedirs(merged_dir, exist_ok=True)
 
-    ground_files = glob(os.path.join(ground_dir, "*_ground.laz"))
-
-    for gf in ground_files:
-        base_name = os.path.basename(gf).replace("_ground.laz", "")
-        ngf = os.path.join(non_ground_dir, f"{base_name}_non_ground.laz")
-
-        if not os.path.exists(ngf):
-            print(f"Skipping {base_name}, no matching non-ground file.")
-            continue
-
-        merged_file = os.path.join(merged_dir, f"{base_name}_merged.laz")
-
-        pipeline_dict = {
-            "pipeline": [
-                {
-                    "type": "readers.las",
-                    "filename": gf,
-                    "tag": "ground"
-                },
-                {
-                    "type": "readers.las",
-                    "filename": ngf,
-                    "tag": "nonground_raw"
-                },
-                {
-                    "type": "filters.assign",
-                    "assignment": "PredSemantic[0:0]=3",
-                    "inputs": ["nonground_raw"],
-                    "tag": "nonground"
-                },
-                {
-                    "type": "filters.merge",
-                    "inputs": ["ground", "nonground"],
-                    "tag": "merged"
-                },
-                {
-                    "type": "writers.las",
-                    "filename": merged_file,
-                    "inputs": ["merged"],
-                    "minor_version": 4,
-                    "extra_dims": "all"
-                }
-            ]
-        }
-
-        pipeline_json = json.dumps(pipeline_dict)
-
-        subprocess.run(
-            ["pdal", "pipeline", "--stdin"],
-            input=pipeline_json.encode(),
-            check=True
+    segmented_point_clouds = create_fully_segmented_point_cloud(
+            ground_dir=ground_dir, 
+            non_ground_dir=non_ground_dir,
+            merged_dir=merged_dir
         )
-
-        print(f"Merged file written: {merged_file}")
 
     # ------------------------------
     # Step 3: Estimate area size
