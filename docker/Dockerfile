@@ -44,9 +44,11 @@ RUN conda create -n pdal-env -c conda-forge -y \
       pdal python-pdal \
       numpy pandas scipy scikit-learn tqdm \
       laspy plyfile geopandas shapely open3d \
- && conda clean -afy
+ && conda clean -afy 
 
- RUN pip install cloth-simulation-filter
+ # Install CSF: Ground Filtering based on Cloth Simulation
+ # https://pypi.org/project/cloth-simulation-filter/
+RUN /opt/conda/envs/pdal-env/bin/pip install cloth-simulation-filter
     
 # Create a directory for building packages
 RUN mkdir -p /build && \
