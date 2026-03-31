@@ -8,6 +8,12 @@ from pathlib import Path
 import time
 from dataclasses import dataclass, field
 from typing import List
+from glob import glob
+import subprocess
+import json
+
+import laspy
+import numpy as np
 
 from datetime import datetime
 
@@ -23,6 +29,8 @@ from calculate_green_volume import voxel_based_green_volume
 
 @dataclass
 class OrchestratorParams:
+    output: Path = None
+
     # CSF
     csf_input_path: Path = None
     csf_output_dir: Path = None
@@ -111,6 +119,7 @@ def parse_cli_args() -> OrchestratorParams:
     args = parser.parse_args()
 
     return OrchestratorParams(
+        output=args.output,
         pyrct_input_path=args.input, 
         pyrct_output_dir=args.output / "rct_leaf_wood",
         pyrct_gradient=args.gradient,
@@ -125,14 +134,13 @@ def parse_cli_args() -> OrchestratorParams:
         pyrct_split_distance=args.split_distance,
         pyrct_branch_segmentation=args.branch_segmentation,
         # pyrct_grid_width=args.grid_width,
-        csf_input_path=args.input / "rct_leaf_wood" / "segmented" / "laz",
+        csf_input_path=args.output / "rct_leaf_wood" / "segmented" / "laz",
         csf_output_dir=args.output / "csf_ground",
         #area_shapefile=args.shapefile,
         gv_input_path=args.output / "csf_ground" / "non_ground",
         gv_output_dir=args.output / "results",
         gv_voxel_sizes=args.voxel_sizes
     )
-
 
 def main(params: OrchestratorParams):
     # ----------------------------------------------
@@ -191,6 +199,67 @@ def main(params: OrchestratorParams):
             input_file=params.csf_input_path,
             output_dir=params.csf_output_dir
         )
+
+    # TODO
+    ground_dir = os.path.join(params.csf_output_dir, "ground")
+    non_ground_dir = os.path.join(params.csf_output_dir, "non_ground")
+    merged_dir = os.path.join(params.output, "results")
+    os.makedirs(merged_dir, exist_ok=True)
+
+    ground_files = glob(os.path.join(ground_dir, "*_ground.laz"))
+
+    for gf in ground_files:
+        base_name = os.path.basename(gf).replace("_ground.laz", "")
+        ngf = os.path.join(non_ground_dir, f"{base_name}_non_ground.laz")
+
+        if not os.path.exists(ngf):
+            print(f"Skipping {base_name}, no matching non-ground file.")
+            continue
+
+        merged_file = os.path.join(merged_dir, f"{base_name}_merged.laz")
+
+        pipeline_dict = {
+            "pipeline": [
+                {
+                    "type": "readers.las",
+                    "filename": gf,
+                    "tag": "ground"
+                },
+                {
+                    "type": "readers.las",
+                    "filename": ngf,
+                    "tag": "nonground_raw"
+                },
+                {
+                    "type": "filters.assign",
+                    "assignment": "PredSemantic[0:0]=3",
+                    "inputs": ["nonground_raw"],
+                    "tag": "nonground"
+                },
+                {
+                    "type": "filters.merge",
+                    "inputs": ["ground", "nonground"],
+                    "tag": "merged"
+                },
+                {
+                    "type": "writers.las",
+                    "filename": merged_file,
+                    "inputs": ["merged"],
+                    "minor_version": 4,
+                    "extra_dims": "all"
+                }
+            ]
+        }
+
+        pipeline_json = json.dumps(pipeline_dict)
+
+        subprocess.run(
+            ["pdal", "pipeline", "--stdin"],
+            input=pipeline_json.encode(),
+            check=True
+        )
+
+        print(f"Merged file written: {merged_file}")
 
     # ------------------------------
     # Step 3: Estimate area size

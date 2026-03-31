@@ -26,16 +26,16 @@ def read_las_files(input_path: Path) -> List[Tuple[Path, laspy.LasData]]:
     return las_files
 
 
-def set_predsemantic(las: laspy.LasData, label: int) -> laspy.LasData:
-    """Add or set the PredSemantic extra dimension for all points."""
+def set_extra_dimension(input_path:str, dimension_name:str, label:int):
+    las = laspy.read(input_path)
 
-    if "PredSemantic" not in las.point_format.dimension_names:
-        extra = laspy.ExtraBytesParams(name="PredSemantic", type=np.uint32)
-        las.add_extra_dim(extra)
+    if dimension_name not in las.point_format.dimension_names:
+        extra_dim = laspy.ExtraBytesParams(name=dimension_name, type='int32')
+        las.add_extra_dim(extra_dim)
 
-    las["PredSemantic"] = np.full(len(las.points), label, dtype=np.uint32)
-    
-    return las
+    las[dimension_name] = np.full(len(las.points), label, dtype=np.uint32)
+
+    las.write(input_path)
 
 
 def run_csf_for_file(
@@ -74,21 +74,27 @@ def run_csf_for_file(
     ground_idx = np.asarray(ground, dtype=np.int64)
     non_ground_idx = np.asarray(non_ground, dtype=np.int64)
 
+    original_pc_header = las.header.copy()
+    header = laspy.LasHeader(point_format=original_pc_header.point_format, version=original_pc_header.version)
+
     # Ground points
-    ground_file = laspy.LasData(las.header.copy())
-    ground_file.points = las.points[ground_idx]
+    ground_las = laspy.LasData(header)
+    ground_las.points = las.points[ground_idx]
 
     ground_output = output_dir / "ground" / f"{Path(input_file).stem}_ground.laz"
     ground_output.parent.mkdir(parents=True, exist_ok=True)
-    ground_file.write(ground_output)
+    ground_las.write(ground_output)
+
+    set_extra_dimension(ground_output, 'PredSemantic', 0)
+    set_extra_dimension(ground_output, 'PredInstance', 0)
 
     # Non-ground points
-    non_ground_file = laspy.LasData(las.header.copy())
-    non_ground_file.points = las.points[non_ground_idx]
+    non_ground_las = laspy.LasData(header)
+    non_ground_las.points = las.points[non_ground_idx]
 
     non_ground_output = output_dir / "non_ground" / f"{Path(input_file).stem}_non_ground.laz"
     non_ground_output.parent.mkdir(parents=True, exist_ok=True)
-    non_ground_file.write(non_ground_output)
+    non_ground_las.write(non_ground_output)
 
     return ground_output, non_ground_output
 
