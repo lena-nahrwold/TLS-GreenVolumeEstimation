@@ -86,6 +86,10 @@ def voxel_based_green_volume(
         pipeline.execute()
         arrays = pipeline.arrays[0]
 
+        print("X min/max:", arrays["X"].min(), arrays["X"].max())
+        print("Y min/max:", arrays["Y"].min(), arrays["Y"].max())
+        print("Z min/max:", arrays["Z"].min(), arrays["Z"].max())
+
         # Find label field
         for name in ('Label', 'label', 'PredSemantic', 'Classification', 'classification'):
             if name in arrays.dtype.names:
@@ -107,22 +111,18 @@ def voxel_based_green_volume(
         else:
             mask_lowveg = None
 
-        coords_total = get_coords(arrays, mask_total)
-        coords_crown = get_coords(arrays, mask_crown)
-        coords_lowveg = get_coords(arrays, mask_lowveg)
-
         results = {
         "Total": compute_voxel_volume(get_coords(arrays, mask_total), voxel_sizes),
         "Crowns": compute_voxel_volume(get_coords(arrays, mask_crown), voxel_sizes),
-    }
+        }
 
-    if mask_lowveg is not None and np.any(mask_lowveg):
-        results["Low Vegetation"] = compute_voxel_volume(get_coords(arrays, mask_lowveg), voxel_sizes)
-    else:
-        # Initialize empty zero volumes if no low vegetation
-        results["Low Vegetation"] = (
-            np.zeros(len(voxel_sizes)), 0.0, 0.0, 0.0
-        )
+        if mask_lowveg is not None and np.any(mask_lowveg):
+            results["Low Vegetation"] = compute_voxel_volume(get_coords(arrays, mask_lowveg), voxel_sizes)
+        else:
+            # Initialize empty zero volumes if no low vegetation
+            results["Low Vegetation"] = (
+                np.zeros(len(voxel_sizes)), 0.0, 0.0, 0.0
+            )
 
         # Accumulate volumes
         for key in keys:
