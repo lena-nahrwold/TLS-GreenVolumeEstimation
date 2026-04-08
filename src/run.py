@@ -100,7 +100,7 @@ def parse_cli_args() -> OrchestratorParams:
                         help="Factor for global taper (0-1) (default: 0.3).")
     parser.add_argument("--gravity-factor", type=float, default=0.3,
                         help="Preference for vertical trees (default: 0.3).")
-    parser.add_argument("-sd", "--split_distance", required=False, type=float, default=0.02,
+    parser.add_argument("-sd", "--split-distance", required=False, type=float, default=0.02,
         help="Smaller values produce more, finer splits; larger values produce fewer, coarser splits")
     parser.add_argument("--branch-segmentation", action="store_true",
                         help="Segment per branch if set; otherwise per tree.")
@@ -111,8 +111,8 @@ def parse_cli_args() -> OrchestratorParams:
     # TODO
 
     # area calculation arguments
-    #parser.add_argument("-s","--shapefile", required=True, type=str,
-    #                help="Shapefile used for cropping the point cloud to AOI.")
+    parser.add_argument("-s","--shapefile", required=True, type=str,
+                    help="Shapefile used for cropping the point cloud to AOI.")
     
     # voxelization arguments
     parser.add_argument("-v","--voxel-sizes", nargs="+", type=float, default=[0.1,0.2,0.3],
@@ -303,7 +303,7 @@ def main(params: OrchestratorParams):
     print("Area size")
     print("=" * 60)
 
-    area = 0.02 #estimate_area_from_shp(shapefile=params.area_shapefile)
+    area = estimate_area_from_shp(shapefile=params.area_shapefile)
 
     # ------------------------------
     # Step 4: Calculate green volume

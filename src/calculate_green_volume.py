@@ -86,10 +86,6 @@ def voxel_based_green_volume(
         pipeline.execute()
         arrays = pipeline.arrays[0]
 
-        print("X min/max:", arrays["X"].min(), arrays["X"].max())
-        print("Y min/max:", arrays["Y"].min(), arrays["Y"].max())
-        print("Z min/max:", arrays["Z"].min(), arrays["Z"].max())
-
         # Find label field
         for name in ('Label', 'label', 'PredSemantic', 'Classification', 'classification'):
             if name in arrays.dtype.names:
@@ -128,6 +124,7 @@ def voxel_based_green_volume(
         for key in keys:
             volumes, *_ = results[key]
             aggregated[key] += volumes
+
 
     # Output file
     output_file = os.path.join(output_dir, "green_volume.txt")
