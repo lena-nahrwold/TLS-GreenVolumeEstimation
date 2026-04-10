@@ -1,22 +1,30 @@
 import argparse
 import os
-import pdal
 import json
+import subprocess
 import numpy as np
 
 
 def crop_point_cloud(pointcloud:str, shapefile:str, output_path:str, use_as_filter:bool) -> str:
-    pipeline = pdal.Pipeline(json.dumps([
-        pointcloud,
-        {
-          "type": "filters.crop",
-          "polygon": shapefile,
-          "outside": use_as_filter
-        },
-        output_path
-    ]))
+    pipeline = {
+        "pipeline": [
+            pointcloud, 
+            {
+                "type": "filters.crop",
+                "polygon": shapefile,
+                "outside": use_as_filter,
+            },
+            output_path
+        ]
+    }
 
-    pipeline.execute()
+    pipeline_json = json.dumps(pipeline)
+
+    subprocess.run(
+        ["pdal", "pipeline", "--stdin"],
+        input=pipeline_json.encode("utf-8"),
+        check=True,
+    )
 
     return output_path
 

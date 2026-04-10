@@ -1,6 +1,6 @@
 import argparse
 import os
-import pdal
+import laspy
 import json
 import numpy as np
 
@@ -29,12 +29,8 @@ def compute_voxel_volume(coords, voxel_sizes):
     return volumes, mean_volume, std_volume, cv
 
 
-def get_coords(arrays, mask):
-    return np.stack((
-        arrays["X"][mask],
-        arrays["Y"][mask],
-        arrays["Z"][mask]
-    ), axis=1).astype(np.float32)
+def get_coords(las, mask=None):
+    return np.column_stack((las.x[mask], las.y[mask], las.z[mask]))
 
 
 def voxel_based_green_volume(
@@ -76,25 +72,19 @@ def voxel_based_green_volume(
     for f in files:
         print(f"Processing: {os.path.basename(f)}")
 
-        pipeline = pdal.Pipeline(json.dumps([
-            {
-                "type": "readers.las",
-                "filename": f
-            }
-        ]))
+        las = laspy.read(f)
 
-        pipeline.execute()
-        arrays = pipeline.arrays[0]
+        standard_dims = set(las.point_format.dimension_names)
+        extra_dims = set(las.point_format.extra_dimension_names)
 
-        # Find label field
-        for name in ('Label', 'label', 'PredSemantic', 'Classification', 'classification'):
-            if name in arrays.dtype.names:
-                label_field = name
+        labels = None
+        for name in ('Label', 'label', 'PredSemantic', 'classification'):
+            if name in standard_dims or name in extra_dims:
+                labels = np.asarray(las[name])
                 break
-        else:
-            raise ValueError(f"No label field found in {f}")
-
-        labels = arrays[label_field]
+            
+        if labels is None:
+            raise ValueError("No label field found")
 
         crown_label = class_labels[0]
         lowveg_label = class_labels[1] if len(class_labels) > 1 else None
@@ -108,12 +98,12 @@ def voxel_based_green_volume(
             mask_lowveg = None
 
         results = {
-        "Total": compute_voxel_volume(get_coords(arrays, mask_total), voxel_sizes),
-        "Crowns": compute_voxel_volume(get_coords(arrays, mask_crown), voxel_sizes),
+        "Total": compute_voxel_volume(get_coords(las, mask_total), voxel_sizes),
+        "Crowns": compute_voxel_volume(get_coords(las, mask_crown), voxel_sizes),
         }
 
         if mask_lowveg is not None and np.any(mask_lowveg):
-            results["Low Vegetation"] = compute_voxel_volume(get_coords(arrays, mask_lowveg), voxel_sizes)
+            results["Low Vegetation"] = compute_voxel_volume(get_coords(las, mask_lowveg), voxel_sizes)
         else:
             # Initialize empty zero volumes if no low vegetation
             results["Low Vegetation"] = (

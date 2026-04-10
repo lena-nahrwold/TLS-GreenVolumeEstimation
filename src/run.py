@@ -150,7 +150,7 @@ def parse_cli_args() -> OrchestratorParams:
         # pyrct_grid_width=args.grid_width,
         csf_input_path=args.output / "rct_leaf_wood" / "segmented" / "laz",
         csf_output_dir=args.output / "csf_ground",
-        #area_shapefile=args.shapefile,
+        area_shapefile=args.shapefile,
         gv_input_path=args.output / "csf_ground" / "non_ground",
         gv_output_dir=args.output / "results",
         gv_voxel_sizes=args.voxel_sizes
