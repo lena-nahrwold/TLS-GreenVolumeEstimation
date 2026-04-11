@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Set LC_ALL and unset LANGUAGE
 ENV LC_ALL=C
-ENV LANGUAGE=
+ENV LANGUAGE=C
 
 # Update, install dependencies and cleanup
 RUN apt-get update && apt-get upgrade -y && \

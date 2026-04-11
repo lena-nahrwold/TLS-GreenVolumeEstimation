@@ -18,9 +18,13 @@ import numpy as np
 
 from datetime import datetime
 
+os.environ['LC_ALL'] = 'C'
 
+sys.path.append(os.path.abspath("../3dtrees_Smart_Tiles/src"))
 sys.path.append(os.path.abspath("../py-rct/src"))
 
+from trees_smart_tile.run import run_tile_task, run_merge_task
+from trees_smart_tile.parameters import Parameters
 from py_rct.rayextract import run_batch_segmentation, run_raycloudtools_segmentation_steps
 
 from ground_classification import run_batch_csf, run_csf_for_file
@@ -28,10 +32,20 @@ from estimate_area_from_shp import estimate_area_from_shp
 from calculate_green_volume import voxel_based_green_volume
 
 
+
+
 @dataclass
 class OrchestratorParams:
     output: Path = None
+    skip_smart_tile: bool = False
     clear_segmentation_output: bool = False
+
+    # Tiling
+    smart_tile_input_dir: Path = None
+    smart_tile_output_dir: Path = None
+    smart_tile_original_dir: Path = None
+    smart_tile_length: int = 50
+    smart_tile_buffer: int = 20
 
     # CSF
     csf_input_path: Path = None
@@ -60,6 +74,10 @@ class OrchestratorParams:
     pyrct_split_distance: float = 0.02,
     pyrct_branch_segmentation: bool = False
     # pyrct_grid_width: float = None
+
+    # Merging
+    smart_merge_input_dir: Path = None
+    smart_merge_output_dir: Path = None
 
     # AOI area estimation
     area_shapefile: Path = None
@@ -219,7 +237,13 @@ def create_fully_segmented_point_cloud(ground_dir:str, non_ground_dir:str, merge
 
 def main(params: OrchestratorParams):
     # ----------------------------------------------
-    # Step 1: Run py-rct for leaf-wood segmentation
+    # Step 1: Tiling
+    # ----------------------------------------------
+
+    # TODO
+
+    # ----------------------------------------------
+    # Step 2: Run py-rct for leaf-wood segmentation
     # ----------------------------------------------
 
     print("\n" + "=" * 60)
@@ -257,7 +281,7 @@ def main(params: OrchestratorParams):
     print(f"Total processing time: {duration:.2f} seconds ({duration / 60:.2f} minutes)")
 
     # ------------------------------
-    # Step 2: Ground classification
+    # Step 3: Ground classification
     # ------------------------------
 
     print("\n" + "=" * 60)
@@ -276,7 +300,7 @@ def main(params: OrchestratorParams):
         )
 
     # -------------------------------------------
-    # Step 3: Create fully segmented point cloud
+    # Step 4: Create fully segmented point cloud
     # -------------------------------------------
 
     print("\n" + "=" * 60)
@@ -294,9 +318,15 @@ def main(params: OrchestratorParams):
             non_ground_dir=non_ground_dir,
             merged_dir=merged_dir
         )
+    
+    # ----------------------------------------------
+    # Step 5: Merging
+    # ----------------------------------------------
+
+    # TODO
 
     # ------------------------------
-    # Step 3: Estimate area size
+    # Step 6: Estimate area size
     # ------------------------------
 
     print("\n" + "=" * 60)
@@ -306,7 +336,7 @@ def main(params: OrchestratorParams):
     area = estimate_area_from_shp(shapefile=params.area_shapefile)
 
     # ------------------------------
-    # Step 4: Calculate green volume
+    # Step 7: Calculate green volume
     # ------------------------------
 
     print("\n" + "=" * 60)

@@ -2,3 +2,7 @@ laspy
 open3d
 cloth-simulation-filter
 geopandas
+
+
+gdal==3.8.4
+lazrs

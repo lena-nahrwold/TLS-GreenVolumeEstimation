@@ -1,3 +1,6 @@
 [submodule "py-rct"]
 	path = py-rct
 	url = https://github.com/lena-nahrwold/py-rct.git
+[submodule "3dtrees_Smart_Tile"]
+	path = 3dtrees_Smart_Tile
+	url = https://github.com/lena-nahrwold/3dtrees_Smart_Tile.git
