@@ -3,6 +3,7 @@ import os
 import laspy
 import json
 import numpy as np
+from estimate_area_from_shp import estimate_area_from_shp
 
 
 def compute_voxel_volume(coords, voxel_sizes):
@@ -182,15 +183,25 @@ def main():
         "-s", "--area-size", type=float,
         help="Area size for normalization (m²)."
     )
+    parser.add_argument("--shapefile", type=str,
+                    help="Shapefile used for cropping the point cloud to AOI. Used for calculating the area size.")
 
     args = parser.parse_args()
+
+    if args.shapefile:
+        area_size = estimate_area_from_shp(args.shapefile)
+    elif args.area_size:
+        area_size = args.area_size
+    else:
+        area_size = None
+        print("No area size or path to shapefile for area size estimation provided.")
 
     voxel_based_green_volume(
         input_path=args.input,
         output_dir=args.output,
         voxel_sizes=args.voxel_size,
         class_labels=np.array(args.class_label),
-        area_size=args.area_size
+        area_size=area_size
     )
 
 

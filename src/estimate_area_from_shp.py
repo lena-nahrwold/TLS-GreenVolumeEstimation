@@ -6,7 +6,7 @@ def estimate_area_from_shp(shapefile:str) -> float:
     gdf = gpd.read_file(shapefile)
     print(gdf.crs) 
 
-    area = gdf.geometry.area
+    area = gdf.geometry.area.sum()
 
     print(f"Area size = {area} m²")
 

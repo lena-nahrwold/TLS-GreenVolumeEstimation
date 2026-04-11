@@ -86,7 +86,6 @@ def run_csf_for_file(
     ground_las.write(ground_output)
 
     set_extra_dimension(ground_output, 'PredSemantic', 0)
-    set_extra_dimension(ground_output, 'PredInstance', 0)
 
     # Non-ground points
     non_ground_las = laspy.LasData(header)
