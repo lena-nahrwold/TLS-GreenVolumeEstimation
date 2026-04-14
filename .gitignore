@@ -208,6 +208,6 @@ __marimo__/
 
 *.laz
 *.ply
-notes.txt
+*notes.txt
 /input/
 /output/

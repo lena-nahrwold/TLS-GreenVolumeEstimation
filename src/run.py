@@ -13,6 +13,7 @@ import json
 import shutil
 import time
 import laspy
+from laspy.point.record import PackedPointRecord
 import numpy as np
 
 from datetime import datetime
@@ -30,11 +31,8 @@ from ground_classification import run_batch_csf, run_csf_for_file
 from estimate_area_from_shp import estimate_area_from_shp
 from calculate_green_volume import voxel_based_green_volume
 
-env = os.environ.copy()
 
-# PDAL-only environment
-env["LD_LIBRARY_PATH"] = "/opt/pdal-2.10.0/lib:" + env.get("LD_LIBRARY_PATH", "")
-env["PATH"] = "/opt/pdal-2.10.0/bin:" + env.get("PATH", "")
+
 
 @dataclass
 class OrchestratorParams:
@@ -202,6 +200,26 @@ def parse_cli_args() -> OrchestratorParams:
         gv_voxel_sizes=args.voxel_sizes
     )
 
+# TODO
+def run_basic_tiling(input: str, output_dir: str, tile_length: int, buffer: int) -> list:
+    # Check that output directory exists
+    if not os.path.exists(output_dir):
+        # If not, create it
+        os.makedirs(output_dir)
+
+    subprocess.run(
+        [
+            "pdal", "tile", input, str(output_dir /"tile_#.laz"), 
+            "--length", str(tile_length), 
+            "--buffer", str(buffer)
+        ],
+        check=True
+    )
+
+    tiles = glob(os.path.join(output_dir, "tile_*.laz"))
+    return tiles
+
+
 def create_fully_segmented_point_cloud(ground_dir:str, non_ground_dir:str, merged_dir:str) -> str:
     ground_files = glob(os.path.join(ground_dir, "*_ground.laz"))
 
@@ -217,48 +235,34 @@ def create_fully_segmented_point_cloud(ground_dir:str, non_ground_dir:str, merge
 
         merged_file = os.path.join(merged_dir, f"{base_name}_merged.laz")
 
-        pipeline_dict = {
-            "pipeline": [
-                {
-                    "type": "readers.las",
-                    "filename": gf,
-                    "tag": "ground"
-                },
-                {
-                    "type": "readers.las",
-                    "filename": ngf,
-                    "tag": "nonground_raw"
-                },
-                {
-                    "type": "filters.assign",
-                    "assignment": "PredSemantic[0:0]=3",
-                    "inputs": ["nonground_raw"],
-                    "tag": "nonground"
-                },
-                {
-                    "type": "filters.merge",
-                    "inputs": ["ground", "nonground"],
-                    "tag": "merged"
-                },
-                {
-                    "type": "writers.las",
-                    "filename": merged_file,
-                    "inputs": ["merged"],
-                    "minor_version": 4,
-                    "extra_dims": "all"
-                }
-            ]
-        }
+        ground = laspy.read(gf)
+        nonground = laspy.read(ngf)
 
-        pipeline_json = json.dumps(pipeline_dict)
+        dimension_name = "PredSemantic"
 
-        subprocess.run(
-            ["pdal", "pipeline", "--stdin"],
-            input=pipeline_json.encode(),
-            env=env, # TODO
-            check=True
-        )
+        if dimension_name not in nonground.point_format.dimension_names:
+            raise ValueError(f"{dimension_name} not found in non-ground file")
 
+        # Replace 0 → 3 (low vegetation)
+        mask = nonground[dimension_name] == 0
+        nonground[dimension_name][mask] = 3
+
+        if ground.point_format.id != nonground.point_format.id:
+            raise ValueError("Point format mismatch")
+        if tuple(ground.point_format.extra_dimension_names) != tuple(nonground.point_format.extra_dimension_names):
+            raise ValueError("Extra dims mismatch")
+
+        # Concatenate underlying numpy arrays
+        merged_array = np.concatenate([ground.points.array, nonground.points.array])
+
+        # Build a new PackedPointRecord with the same point_format
+        merged_points = PackedPointRecord(merged_array, ground.point_format)
+
+        # Create output LasData from ground header and assign points
+        merged = laspy.LasData(ground.header.copy())
+        merged.points = merged_points
+
+        merged.write(merged_file)
 
         merged_files.append(merged_file)
 
@@ -289,6 +293,7 @@ def main(params: OrchestratorParams):
     # ----------------------------------------------
     # Step 2: Run py-rct for leaf-wood segmentation
     # ----------------------------------------------
+
     print("\n" + "=" * 60)
     print("RayCloudTools")
     print("=" * 60)
