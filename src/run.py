@@ -384,17 +384,7 @@ def main(params: OrchestratorParams):
         run_merge_task(smart_tile_params)
 
     # ------------------------------
-    # Step 6: Estimate area size
-    # ------------------------------
-
-    print("\n" + "=" * 60)
-    print("Area size")
-    print("=" * 60)
-
-    area = estimate_area_from_shp(shapefile=params.area_shapefile)
-
-    # ------------------------------
-    # Step 7: Calculate green volume
+    # Step 6: Calculate green volume
     # ------------------------------
 
     print("\n" + "=" * 60)
@@ -406,7 +396,7 @@ def main(params: OrchestratorParams):
         output_dir=params.gv_output_dir, 
         voxel_sizes=params.gv_voxel_sizes, 
         class_labels=[0,2], 
-        area_size=area
+        shapefile=params.area_shapefile
     )
 
     if params.clear_segmentation_output:
