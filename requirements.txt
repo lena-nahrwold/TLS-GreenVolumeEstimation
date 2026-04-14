@@ -6,3 +6,8 @@ geopandas
 
 gdal==3.8.4
 lazrs
+pydantic 
+pydantic-settings
+fiona
+matplotlib 
+pyproj

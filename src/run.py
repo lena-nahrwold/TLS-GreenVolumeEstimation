@@ -5,14 +5,13 @@ import sys
 import os
 import argparse
 from pathlib import Path
-import time
 from dataclasses import dataclass, field
 from typing import List
 from glob import glob
 import subprocess
 import json
 import shutil
-
+import time
 import laspy
 import numpy as np
 
@@ -20,8 +19,8 @@ from datetime import datetime
 
 os.environ['LC_ALL'] = 'C'
 
-sys.path.append(os.path.abspath("../3dtrees_Smart_Tiles/src"))
-sys.path.append(os.path.abspath("../py-rct/src"))
+sys.path.append(os.path.abspath("3dtrees_Smart_Tile/src"))
+sys.path.append(os.path.abspath("py-rct/src"))
 
 from trees_smart_tile.run import run_tile_task, run_merge_task
 from trees_smart_tile.parameters import Parameters
@@ -31,21 +30,26 @@ from ground_classification import run_batch_csf, run_csf_for_file
 from estimate_area_from_shp import estimate_area_from_shp
 from calculate_green_volume import voxel_based_green_volume
 
+env = os.environ.copy()
 
-
+# PDAL-only environment
+env["LD_LIBRARY_PATH"] = "/opt/pdal-2.10.0/lib:" + env.get("LD_LIBRARY_PATH", "")
+env["PATH"] = "/opt/pdal-2.10.0/bin:" + env.get("PATH", "")
 
 @dataclass
 class OrchestratorParams:
+    input: Path = None
     output: Path = None
-    skip_smart_tile: bool = False
+    skip_tiling: bool = False
     clear_segmentation_output: bool = False
 
     # Tiling
     smart_tile_input_dir: Path = None
     smart_tile_output_dir: Path = None
     smart_tile_original_dir: Path = None
-    smart_tile_length: int = 50
-    smart_tile_buffer: int = 20
+    smart_tile_length: int = 30
+    smart_tile_buffer: int = 10
+    smart_tile_skip_dimension_reduction: bool = False
 
     # CSF
     csf_input_path: Path = None
@@ -77,7 +81,7 @@ class OrchestratorParams:
 
     # Merging
     smart_merge_input_dir: Path = None
-    smart_merge_output_dir: Path = None
+    smart_merge_tile_bounds_tindex: Path = None
 
     # AOI area estimation
     area_shapefile: Path = None
@@ -98,6 +102,14 @@ def parse_cli_args() -> OrchestratorParams:
                     help="Input directory containing raw LAZ/LAS files.")
     parser.add_argument("--output", required=True, type=Path,
                         help="Output directory.")
+    parser.add_argument("--skip-tiling", action="store_true")
+
+    parser.add_argument("--tile-length", type=int, default=30,
+                        help="Tile size in meters for Smart Tile (default: 30).")
+    parser.add_argument("--tile-buffer", type=int, default=10,
+                        help="Buffer overlap in meters for Smart Tile tiles (default: 10).")
+    parser.add_argument("--skip-dimension-reduction", type=bool, default=False,
+                        help="Set to False (default) to reduce to X, Y, Z only for ~37 percent file size reduction (useful for raw pre-segmentation data), set to True for keeping all dimensions (for post-segmentation data).")
     
     # py-rct arguments
     parser.add_argument("--gradient", type=float, default=1.0,
@@ -150,9 +162,19 @@ def parse_cli_args() -> OrchestratorParams:
     args = parser.parse_args()
 
     return OrchestratorParams(
+        input=args.input,
         output=args.output,
+        skip_tiling=args.skip_tiling,
         clear_segmentation_output=args.clear_segmentation_output,
-        pyrct_input_path=args.input, 
+
+        smart_tile_input_dir=args.input,
+        smart_tile_output_dir=args.output / "tiles",
+        smart_tile_original_dir=args.input,
+        smart_tile_length=args.tile_length,
+        smart_tile_buffer=args.tile_buffer,
+        smart_tile_skip_dimension_reduction=args.skip_dimension_reduction,   
+
+        pyrct_input_path=args.output / "tiles" / "subsampled_res1", 
         pyrct_output_dir=args.output / "rct_leaf_wood",
         pyrct_gradient=args.gradient,
         pyrct_max_diameter=args.max_diameter,
@@ -166,9 +188,15 @@ def parse_cli_args() -> OrchestratorParams:
         pyrct_split_distance=args.split_distance,
         pyrct_branch_segmentation=args.branch_segmentation,
         # pyrct_grid_width=args.grid_width,
+
         csf_input_path=args.output / "rct_leaf_wood" / "segmented" / "laz",
         csf_output_dir=args.output / "csf_ground",
+
+        smart_merge_input_dir= args.output / "results" / "segmented_laz",
+        smart_merge_tile_bounds_tindex= args.output / "tiles" / "tile_bounds_tindex.json",
+
         area_shapefile=args.shapefile,
+
         gv_input_path=args.output / "csf_ground" / "non_ground",
         gv_output_dir=args.output / "results",
         gv_voxel_sizes=args.voxel_sizes
@@ -227,25 +255,40 @@ def create_fully_segmented_point_cloud(ground_dir:str, non_ground_dir:str, merge
         subprocess.run(
             ["pdal", "pipeline", "--stdin"],
             input=pipeline_json.encode(),
+            env=env, # TODO
             check=True
         )
+
 
         merged_files.append(merged_file)
 
     return merged_files
 
-
 def main(params: OrchestratorParams):
+    # Check that output directory exists
+    if not os.path.exists(params.output):
+        # If not, create it
+        os.makedirs(params.output)
+
     # ----------------------------------------------
     # Step 1: Tiling
     # ----------------------------------------------
 
-    # TODO
+    if not params.skip_tiling:
+        smart_tile_params = Parameters(
+            input_dir=params.smart_tile_input_dir,
+            output_dir=params.smart_tile_output_dir,
+            tile_length=params.smart_tile_length,
+            tile_buffer=params.smart_tile_buffer,
+            skip_dimension_reduction=False,
+            workers=8 # TODO
+        )
+
+        run_tile_task(smart_tile_params)
 
     # ----------------------------------------------
     # Step 2: Run py-rct for leaf-wood segmentation
     # ----------------------------------------------
-
     print("\n" + "=" * 60)
     print("RayCloudTools")
     print("=" * 60)
@@ -318,12 +361,22 @@ def main(params: OrchestratorParams):
             non_ground_dir=non_ground_dir,
             merged_dir=merged_dir
         )
-    
+
     # ----------------------------------------------
     # Step 5: Merging
     # ----------------------------------------------
 
-    # TODO
+    if not params.skip_tiling:
+        smart_tile_params = Parameters(
+            segmented_remapped_folder=params.smart_merge_input_dir,
+            original_input_dir=params.smart_tile_original_dir,
+            tile_bounds_json=params.smart_merge_tile_bounds_tindex,
+            buffer=params.smart_tile_buffer,
+            enable_volume_merge=False,
+            skip_merged_file=True
+        )
+
+        run_merge_task(smart_tile_params)
 
     # ------------------------------
     # Step 6: Estimate area size
