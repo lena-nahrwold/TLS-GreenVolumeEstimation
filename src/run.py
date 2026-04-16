@@ -27,8 +27,7 @@ from trees_smart_tile.run import run_tile_task, run_merge_task
 from trees_smart_tile.parameters import Parameters
 from py_rct.rayextract import run_batch_segmentation, run_raycloudtools_segmentation_steps
 
-from ground_classification import run_batch_csf, run_csf_for_file
-from estimate_area_from_shp import estimate_area_from_shp
+from ground_classification import run_csf
 from calculate_green_volume import voxel_based_green_volume
 
 
@@ -38,31 +37,18 @@ from calculate_green_volume import voxel_based_green_volume
 class OrchestratorParams:
     input: Path = None
     output: Path = None
+    basic_tiling: Path = False
     skip_tiling: bool = False
     clear_segmentation_output: bool = False
 
     # Tiling
-    smart_tile_input_dir: Path = None
-    smart_tile_output_dir: Path = None
-    smart_tile_original_dir: Path = None
-    smart_tile_length: int = 30
-    smart_tile_buffer: int = 10
+    tile_output_dir: Path = None
+    tile_original_dir: Path = None
+    tile_length: int = 30
+    tile_buffer: int = 10
     smart_tile_skip_dimension_reduction: bool = False
 
-    # CSF
-    csf_input_path: Path = None
-    csf_output_dir: Path = None
-    csf_ground_label: int = 0
-    csf_non_ground_label: int = 1
-    csf_cloth_resolution: float = 0.05
-    csf_rigidness: int = 3
-    csf_time_step: float = 0.65
-    csf_class_threshold: float = 0.02
-    csf_iterations: int = 500
-    csf_slope_smooth: bool = False
-
     # py-rct
-    pyrct_input_path: Path = None
     pyrct_output_dir: Path = None
     pyrct_gradient: float = 1.0
     pyrct_max_diameter: float = 0.9
@@ -76,6 +62,18 @@ class OrchestratorParams:
     pyrct_split_distance: float = 0.02,
     pyrct_branch_segmentation: bool = False
     # pyrct_grid_width: float = None
+
+    # CSF
+    csf_input_path: Path = None
+    csf_output_dir: Path = None
+    csf_ground_label: int = 0
+    csf_non_ground_label: int = 1
+    csf_cloth_resolution: float = 0.05
+    csf_rigidness: int = 3
+    csf_time_step: float = 0.65
+    csf_class_threshold: float = 0.02
+    csf_iterations: int = 500
+    csf_slope_smooth: bool = False
 
     # Merging
     smart_merge_input_dir: Path = None
@@ -100,8 +98,15 @@ def parse_cli_args() -> OrchestratorParams:
                     help="Input directory containing raw LAZ/LAS files.")
     parser.add_argument("--output", required=True, type=Path,
                         help="Output directory.")
+    parser.add_argument(
+        "--basic-tiling",
+        action="store_true",
+        help=(
+            "Use fast, basic tiling without cross-tile merging of segmentation results."
+            "For merged tree instance IDs, smart tiling is required."
+        ),
+    )
     parser.add_argument("--skip-tiling", action="store_true")
-
     parser.add_argument("--tile-length", type=int, default=30,
                         help="Tile size in meters for Smart Tile (default: 30).")
     parser.add_argument("--tile-buffer", type=int, default=10,
@@ -162,17 +167,16 @@ def parse_cli_args() -> OrchestratorParams:
     return OrchestratorParams(
         input=args.input,
         output=args.output,
+        basic_tiling=args.basic_tiling,
         skip_tiling=args.skip_tiling,
         clear_segmentation_output=args.clear_segmentation_output,
 
-        smart_tile_input_dir=args.input,
-        smart_tile_output_dir=args.output / "tiles",
-        smart_tile_original_dir=args.input,
-        smart_tile_length=args.tile_length,
-        smart_tile_buffer=args.tile_buffer,
+        tile_output_dir=args.output / "tiles",
+        tile_original_dir=args.input,
+        tile_length=args.tile_length,
+        tile_buffer=args.tile_buffer,
         smart_tile_skip_dimension_reduction=args.skip_dimension_reduction,   
 
-        pyrct_input_path=args.output / "tiles" / "subsampled_res1", 
         pyrct_output_dir=args.output / "rct_leaf_wood",
         pyrct_gradient=args.gradient,
         pyrct_max_diameter=args.max_diameter,
@@ -200,7 +204,7 @@ def parse_cli_args() -> OrchestratorParams:
         gv_voxel_sizes=args.voxel_sizes
     )
 
-# TODO
+
 def run_basic_tiling(input: str, output_dir: str, tile_length: int, buffer: int) -> list:
     # Check that output directory exists
     if not os.path.exists(output_dir):
@@ -216,8 +220,7 @@ def run_basic_tiling(input: str, output_dir: str, tile_length: int, buffer: int)
         check=True
     )
 
-    tiles = glob(os.path.join(output_dir, "tile_*.laz"))
-    return tiles
+    return output_dir
 
 
 def create_fully_segmented_point_cloud(ground_dir:str, non_ground_dir:str, merged_dir:str) -> str:
@@ -279,21 +282,32 @@ def main(params: OrchestratorParams):
     # ----------------------------------------------
 
     if not params.skip_tiling:
-        smart_tile_params = Parameters(
-            input_dir=params.smart_tile_input_dir,
-            output_dir=params.smart_tile_output_dir,
-            tile_length=params.smart_tile_length,
-            tile_buffer=params.smart_tile_buffer,
-            skip_dimension_reduction=False,
-            workers=8 # TODO
-        )
+        if params.basic_tiling:
+            pyrct_input_path = run_basic_tiling(input=params.input, 
+                                            output_dir=params.tile_output_dir,
+                                            tile_length=params.tile_length,
+                                            buffer=params.tile_buffer)
+        else:
+            smart_tile_params = Parameters(
+                input_dir=params.input,
+                output_dir=params.tile_output_dir,
+                tile_length=params.tile_length,
+                tile_buffer=params.tile_buffer,
+                skip_dimension_reduction=False,
+                workers=8 # TODO
+            )
 
-        run_tile_task(smart_tile_params)
+            run_tile_task(smart_tile_params)
+
+            pyrct_input_path = params.tile_output_dir / "subsampled_res1"
+    
+    else: 
+        pyrct_input_path = params.input
 
     # ----------------------------------------------
     # Step 2: Run py-rct for leaf-wood segmentation
     # ----------------------------------------------
-
+    """
     print("\n" + "=" * 60)
     print("RayCloudTools")
     print("=" * 60)
@@ -304,7 +318,7 @@ def main(params: OrchestratorParams):
     print(f"Processing started at {start_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
 
     run_batch_segmentation(
-        in_dir=params.pyrct_input_path,
+        in_dir=pyrct_input_path,
         out_dir=params.pyrct_output_dir,
         gradient=params.pyrct_gradient,
         max_diameter=params.pyrct_max_diameter,
@@ -327,7 +341,7 @@ def main(params: OrchestratorParams):
 
     print(f"\nSegmentation steps completed at {end_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Total processing time: {duration:.2f} seconds ({duration / 60:.2f} minutes)")
-
+    """
     # ------------------------------
     # Step 3: Ground classification
     # ------------------------------
@@ -336,16 +350,10 @@ def main(params: OrchestratorParams):
     print("Cloth Simulation Filter")
     print("=" * 60)
 
-    if os.path.isdir(params.csf_input_path):
-        ground, non_ground = run_batch_csf(
-            input_path=params.csf_input_path, 
-            output_dir=params.csf_output_dir
-        )
-    else:
-        ground, non_ground = run_csf_for_file(
-            input_file=params.csf_input_path,
-            output_dir=params.csf_output_dir
-        )
+    ground, non_ground = run_csf(
+        input_dir=params.csf_input_path, 
+        output_dir=params.csf_output_dir
+    )
 
     # -------------------------------------------
     # Step 4: Create fully segmented point cloud
@@ -356,14 +364,12 @@ def main(params: OrchestratorParams):
     print("=" * 60)
     
     # TODO
-    ground_dir = os.path.join(params.csf_output_dir, "ground")
-    non_ground_dir = os.path.join(params.csf_output_dir, "non_ground")
     merged_dir = os.path.join(params.output, "results/segmented_laz")
     os.makedirs(merged_dir, exist_ok=True)
 
     segmented_point_clouds = create_fully_segmented_point_cloud(
-            ground_dir=ground_dir, 
-            non_ground_dir=non_ground_dir,
+            ground_dir=ground, 
+            non_ground_dir=non_ground,
             merged_dir=merged_dir
         )
 
@@ -371,7 +377,7 @@ def main(params: OrchestratorParams):
     # Step 5: Merging
     # ----------------------------------------------
 
-    if not params.skip_tiling:
+    if not params.skip_tiling and not params.basic_tiling:
         smart_tile_params = Parameters(
             segmented_remapped_folder=params.smart_merge_input_dir,
             original_input_dir=params.smart_tile_original_dir,

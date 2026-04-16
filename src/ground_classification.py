@@ -40,9 +40,8 @@ def set_extra_dimension(input_path:str, dimension_name:str, label:int):
 
 def run_csf_for_file(
     input_file: Path,
-    output_dir: Path,
-    ground_label: int = 0,
-    non_ground_label: int = 1,
+    ground_dir: Path,
+    non_ground_dir: Path,
     cloth_resolution: float = 0.05,
     rigidness: int = 3,
     time_step: float = 0.65,
@@ -54,7 +53,6 @@ def run_csf_for_file(
     las = laspy.read(input_file)
 
     xyz = np.vstack((las.x, las.y, las.z)).transpose()
-    points = las.points
 
     csf = CSF.CSF()
     csf.params.bSloopSmooth = slope_smooth
@@ -69,8 +67,6 @@ def run_csf_for_file(
     non_ground = CSF.VecInt()
     csf.do_filtering(ground, non_ground)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     ground_idx = np.asarray(ground, dtype=np.int64)
     non_ground_idx = np.asarray(non_ground, dtype=np.int64)
 
@@ -81,7 +77,7 @@ def run_csf_for_file(
     ground_las = laspy.LasData(header)
     ground_las.points = las.points[ground_idx]
 
-    ground_output = output_dir / "ground" / f"{Path(input_file).stem}_ground.laz"
+    ground_output = ground_dir / f"{Path(input_file).stem}_ground.laz"
     ground_output.parent.mkdir(parents=True, exist_ok=True)
     ground_las.write(ground_output)
 
@@ -91,44 +87,47 @@ def run_csf_for_file(
     non_ground_las = laspy.LasData(header)
     non_ground_las.points = las.points[non_ground_idx]
 
-    non_ground_output = output_dir / "non_ground" / f"{Path(input_file).stem}_non_ground.laz"
+    non_ground_output = non_ground_dir / f"{Path(input_file).stem}_non_ground.laz"
     non_ground_output.parent.mkdir(parents=True, exist_ok=True)
     non_ground_las.write(non_ground_output)
 
     return ground_output, non_ground_output
 
 
-def run_batch_csf(
-    input_path: str,
+def run_csf(
+    input_dir: str,
     output_dir: str,
-    ground_label: int = 0,
-    non_ground_label: int = 1,
     cloth_resolution: float = 0.05,
     rigidness: int = 3,
     time_step: float = 0.65,
     class_threshold: float = 0.02,
     iterations: int = 500,
     slope_smooth: bool = False
-) -> List[Tuple[Path, Path]]:
+) -> Tuple[Path, Path]:
     """
-    Run CSF on a single file or all LAS/LAZ files in a directory.
-    Returns a list of tuples: (ground_output_path, non_ground_output_path)
+    Run CSF on all LAS/LAZ files in a directory.
+    Returns a tuple: (ground_output_path, non_ground_output_path)
     """
     output_dir = Path(output_dir)
     # Clean output_directory, if necessary
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir) # Remove directory with all files and subdirectories
         os.mkdir(output_dir) # Create empty directory
+
+    ground_dir = output_dir / "ground"
+    ground_dir.mkdir(parents=True, exist_ok=True)
+    
+    non_ground_dir = output_dir / "non_ground"
+    non_ground_dir.mkdir(parents=True, exist_ok=True)
     
     # Find all LAZ files in input directory
-    laz_files = glob(f'{input_path}/*.laz')
+    laz_files = glob(f'{input_dir}/*.laz')
 
     for f in laz_files:
         ground, non_ground = run_csf_for_file(
                                 input_file=f,
-                                output_dir=output_dir,
-                                ground_label=ground_label,
-                                non_ground_label=non_ground_label,
+                                ground_dir=ground_dir,
+                                non_ground_dir=non_ground_dir,
                                 cloth_resolution=cloth_resolution,
                                 rigidness=rigidness,
                                 time_step=time_step,
@@ -136,19 +135,15 @@ def run_batch_csf(
                                 iterations=iterations,
                                 slope_smooth=slope_smooth
                             )
-    ground_output_path = output_dir / "ground"
-    non_ground_output_path = output_dir / "non_ground"
     
-    return ground_output_path, non_ground_output_path
+    return ground_dir, non_ground_dir
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CSF ground filtering for LAS/LAZ files (single or batch)")
+    parser = argparse.ArgumentParser(description="CSF ground filtering for LAS/LAZ files")
 
-    parser.add_argument("-i", "--input", required=True, help="Input LAS/LAZ file or directory")
+    parser.add_argument("-i", "--input_dir", required=True, help="Input directory containing LAS/LAZ files")
     parser.add_argument("-o", "--output_dir", required=True, help="Output directory")
-    parser.add_argument("--ground-label", type=int, default=0)
-    parser.add_argument("--non-ground-label", type=int, default=1)
     parser.add_argument("--cloth_resolution", type=float, default=0.05)
     parser.add_argument("--rigidness", type=int, default=3)
     parser.add_argument("--time_step", type=float, default=0.65)
@@ -158,32 +153,16 @@ def main():
 
     args = parser.parse_args()
 
-    if os.path.isdir(args.input):
-        run_batch_csf(
-            input_path=args.input,
-            output_dir=args.output_dir,
-            ground_label=args.ground_label,
-            non_ground_label=args.non_ground_label,
-            cloth_resolution=args.cloth_resolution,
-            rigidness=args.rigidness,
-            time_step=args.time_step,
-            class_threshold=args.class_threshold,
-            iterations=args.iterations,
-            slope_smooth=args.slope_smooth
-        )
-    else: 
-        run_csf_for_file(
-            input_file=args.input,
-            output_dir=args.output_dir,
-            ground_label=args.ground_label,
-            non_ground_label=args.non_ground_label,
-            cloth_resolution=args.cloth_resolution,
-            rigidness=args.rigidness,
-            time_step=args.time_step,
-            class_threshold=args.class_threshold,
-            iterations=args.iterations,
-            slope_smooth=args.slope_smooth
-        )
+    ground, non_ground =  run_csf(
+                            input_path=args.input,
+                            output_dir=args.output_dir,
+                            cloth_resolution=args.cloth_resolution,
+                            rigidness=args.rigidness,
+                            time_step=args.time_step,
+                            class_threshold=args.class_threshold,
+                            iterations=args.iterations,
+                            slope_smooth=args.slope_smooth
+                        )
 
 if __name__ == "__main__":
     main()
