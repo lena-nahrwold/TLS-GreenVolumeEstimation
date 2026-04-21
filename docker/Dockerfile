@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Set LC_ALL and unset LANGUAGE
 ENV LC_ALL=C
-ENV LANGUAGE=C
+ENV LANGUAGE=
 
 # Update, install dependencies and cleanup
 RUN apt-get update && apt-get upgrade -y && \
@@ -27,52 +27,20 @@ RUN apt-get update && apt-get upgrade -y && \
     vim \
     curl && \
     rm -rf /var/lib/apt/lists/*
-
-# Install Miniconda
-ENV CONDA_DIR=/opt/conda
-RUN curl -sSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o miniconda.sh \
- && bash miniconda.sh -b -p $CONDA_DIR \
- && rm miniconda.sh
-ENV PATH=$CONDA_DIR/bin:$PATH
-
-RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
-RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-
-# Create PDAL conda env
-RUN conda create -n pdal-env -c conda-forge -y \
-      python=3.11 \
-      pdal python-pdal \
-      numpy pandas scipy scikit-learn tqdm \
-      laspy plyfile geopandas shapely open3d \
- && conda clean -afy 
-
- # Install CSF: Ground Filtering based on Cloth Simulation
- # https://pypi.org/project/cloth-simulation-filter/
-RUN /opt/conda/envs/pdal-env/bin/pip install cloth-simulation-filter
     
 # Create a directory for building packages
 RUN mkdir -p /build && \
     cd /build
 
-# Clone, build and clean up LASzip
+# Clone, build and clean up LASzip (3.x supports LAS 1.4 via laszip_api.h C API)
 RUN git clone https://github.com/LASzip/LASzip.git && \
     cd LASzip && \
-    git checkout tags/2.0.1 && \
+    git checkout tags/3.4.4 && \
     mkdir build && cd build && \
-    cmake .. && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
     make -j$(nproc) && \
     make install && \
-    cp bin/Release/liblas* /usr/lib/ && \
     cd ../.. && rm -rf LASzip
-
-# Clone, build and clean up libLAS
-RUN git clone https://github.com/libLAS/libLAS.git && \
-    cd libLAS && \
-    mkdir build && cd build && \
-    cmake .. -DWITH_LASZIP=ON -DWITH_GEOTIFF=OFF -DCMAKE_CXX_STANDARD=14 && \
-    make -j$(nproc) && \
-    make install && \
-    cd ../.. && rm -rf libLAS
 
 # Clone, build and clean up Qhull
 RUN git clone https://github.com/qhull/qhull.git && \
@@ -130,21 +98,50 @@ RUN git clone https://github.com/csiro-robotics/treetools.git && \
     make install && \
     cd ../.. && \
     rm -rf treetools
-    
+
 # Update ldconfig
 RUN ldconfig /usr/local/lib
 
 # Clean up build directory
 RUN rm -rf /build
 
+# Miniforge
+ENV CONDA_DIR=/opt/conda
+RUN curl -L https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -o /tmp/miniforge.sh && \
+    bash /tmp/miniforge.sh -b -p ${CONDA_DIR} && \
+    rm /tmp/miniforge.sh
+ENV PATH=${CONDA_DIR}/bin:${PATH}
+
+# Create dedicated runtime env with supported Python
+RUN mamba create -n appenv -c conda-forge -y \
+    python=3.11 \
+    gdal \
+    untwine \
+    pip && \
+    mamba clean --all -y
+
+# Install Python packages into that env
+RUN /opt/conda/envs/appenv/bin/python -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    /opt/conda/envs/appenv/bin/pip install --no-cache-dir \
+        laspy \
+        open3d \
+        cloth-simulation-filter \
+        geopandas \
+        lazrs \
+        pydantic \
+        pydantic-settings \
+        fiona \
+        matplotlib \
+        pyproj
+
+# Make the env default
+ENV PATH=/opt/conda/envs/appenv/bin:/opt/conda/bin:$PATH
+
 # Set the working directory
 WORKDIR /workspace
 
+COPY 3dtrees_Smart_Tile /3dtrees_Smart_Tile
 COPY py-rct /py-rct
 COPY src /src
 
-COPY docker/entrypoint.sh /entrypoint.sh
-
-RUN chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]
