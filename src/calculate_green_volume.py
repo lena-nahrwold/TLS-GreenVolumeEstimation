@@ -39,9 +39,9 @@ def voxel_based_green_volume(
         output_dir: str = None,
         voxel_sizes: list = [0.1, 0.2, 0.3],
         class_labels: list = None,
-        area_size: float = None
+        area_size: float = None,
+        shapefile: str = None
     ) -> str:
-
     # Resolve input
     if os.path.isfile(input_path):
         files = [input_path]
@@ -61,6 +61,11 @@ def voxel_based_green_volume(
 
     print(f"Found {len(files)} file(s) for processing.")
 
+    if shapefile:
+        area_size = estimate_area_from_shp(shapefile)
+    elif area_size is None:
+        print("No area size or path to shapefile for area size estimation provided.")
+        
     keys = ["Total", "Crowns", "Low Vegetation"]
 
     # aggregation container
@@ -188,20 +193,13 @@ def main():
 
     args = parser.parse_args()
 
-    if args.shapefile:
-        area_size = estimate_area_from_shp(args.shapefile)
-    elif args.area_size:
-        area_size = args.area_size
-    else:
-        area_size = None
-        print("No area size or path to shapefile for area size estimation provided.")
-
     voxel_based_green_volume(
         input_path=args.input,
         output_dir=args.output,
         voxel_sizes=args.voxel_size,
         class_labels=np.array(args.class_label),
-        area_size=area_size
+        area_size=args.area_size if args.area_size else None,
+        shapefile=args.shapefile if args.shapefile else None
     )
 
 

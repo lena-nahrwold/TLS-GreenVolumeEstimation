@@ -20,8 +20,8 @@ from datetime import datetime
 
 os.environ['LC_ALL'] = 'C'
 
-sys.path.append(os.path.abspath("3dtrees_Smart_Tile/src"))
-sys.path.append(os.path.abspath("py-rct/src"))
+sys.path.append(os.path.abspath("/3dtrees_Smart_Tile/src"))
+sys.path.append(os.path.abspath("/py-rct/src"))
 
 from trees_smart_tile.run import run_tile_task, run_merge_task
 from trees_smart_tile.parameters import Parameters
@@ -280,7 +280,7 @@ def main(params: OrchestratorParams):
     # ----------------------------------------------
     # Step 1: Tiling
     # ----------------------------------------------
-
+    """
     if not params.skip_tiling:
         if params.basic_tiling:
             pyrct_input_path = run_basic_tiling(input=params.input, 
@@ -307,7 +307,6 @@ def main(params: OrchestratorParams):
     # ----------------------------------------------
     # Step 2: Run py-rct for leaf-wood segmentation
     # ----------------------------------------------
-    """
     print("\n" + "=" * 60)
     print("RayCloudTools")
     print("=" * 60)
@@ -341,7 +340,7 @@ def main(params: OrchestratorParams):
 
     print(f"\nSegmentation steps completed at {end_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Total processing time: {duration:.2f} seconds ({duration / 60:.2f} minutes)")
-    """
+
     # ------------------------------
     # Step 3: Ground classification
     # ------------------------------
@@ -388,7 +387,7 @@ def main(params: OrchestratorParams):
         )
 
         run_merge_task(smart_tile_params)
-
+    """
     # ------------------------------
     # Step 6: Calculate green volume
     # ------------------------------
