@@ -42,10 +42,10 @@ def run_csf_for_file(
     input_file: Path,
     ground_dir: Path,
     non_ground_dir: Path,
-    cloth_resolution: float = 0.05,
-    rigidness: int = 3,
+    cloth_resolution: float = 0.5,
+    rigidness: int = 2,
     time_step: float = 0.65,
-    class_threshold: float = 0.02,
+    class_threshold: float = 0.5,
     iterations: int = 500,
     slope_smooth: bool = False
 ) -> Tuple[Path, Path]:
@@ -98,9 +98,9 @@ def run_csf(
     input_dir: str,
     output_dir: str,
     cloth_resolution: float = 0.05,
-    rigidness: int = 3,
+    rigidness: int = 2,
     time_step: float = 0.65,
-    class_threshold: float = 0.02,
+    class_threshold: float = 0.5,
     iterations: int = 500,
     slope_smooth: bool = False
 ) -> Tuple[Path, Path]:
@@ -142,14 +142,21 @@ def run_csf(
 def main():
     parser = argparse.ArgumentParser(description="CSF ground filtering for LAS/LAZ files")
 
-    parser.add_argument("-i", "--input_dir", required=True, help="Input directory containing LAS/LAZ files")
-    parser.add_argument("-o", "--output_dir", required=True, help="Output directory")
-    parser.add_argument("--cloth_resolution", type=float, default=0.05)
-    parser.add_argument("--rigidness", type=int, default=3)
-    parser.add_argument("--time_step", type=float, default=0.65)
-    parser.add_argument("--class_threshold", type=float, default=0.02)
-    parser.add_argument("--iterations", type=int, default=500)
-    parser.add_argument("--slope_smooth", action="store_true")
+    parser.add_argument("--cloth-resolution", type=float, default=0.05,
+                        help="Cloth resolution refers to the grid size of cloth which is use to cover the terrain. The bigger cloth resolution you have set, the coarser DTM you will get.")
+    parser.add_argument("--rigidness", type=int, choices=[1, 2, 3],    
+                        default=2, help=(
+                            "Cloth rigidness preset controlling terrain type: "
+                            "1 = steep/rugged (soft cloth), 2 = relief (medium), "
+                            "3 = flat (rigid). Default: 2 (relief)."))
+    parser.add_argument("--time-step", type=float, default=0.65,
+                        help="Simulation time step controlling how far the cloth moves per iteration. Larger values speed up convergence but may reduce stability; smaller values improve accuracy but require more iterations.")
+    parser.add_argument("--class-threshold", type=float, default=0.5,
+                        help="Classification threshold refers to a threshold to classify the original point cloud into ground and non-ground parts based on the distances between original point cloud and the simulated terrain. 0.5 is adapted to most of scenes.")
+    parser.add_argument("--iterations", type=int, default=500,
+                        help="Maximum iteration times of terrain simulation. 500 is enough for most of scenes.")
+    parser.add_argument("--slope-smooth", action="store_true",
+                        help="Enable slope smoothing to improve ground detection in steep or rugged terrain. Helps reduce misclassification on sharp elevation changes.")
 
     args = parser.parse_args()
 

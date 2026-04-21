@@ -63,8 +63,6 @@ def voxel_based_green_volume(
 
     if shapefile:
         area_size = estimate_area_from_shp(shapefile)
-    elif area_size is None:
-        print("No area size or path to shapefile for area size estimation provided.")
         
     keys = ["Total", "Crowns", "Low Vegetation"]
 
