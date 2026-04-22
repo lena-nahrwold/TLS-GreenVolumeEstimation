@@ -5,7 +5,7 @@ import sys
 import os
 import argparse
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import List
 from glob import glob
 import subprocess
@@ -35,8 +35,8 @@ from calculate_green_volume import voxel_based_green_volume
 class OrchestratorParams:
     input: Path = None
     output: Path = None
-    basic_tiling: Path = False
-    skip_tiling: bool = False
+    task: str = "all"
+    tiling: str = "skip"
     clear_segmentation_output: bool = False
 
     # Tiling
@@ -71,7 +71,7 @@ class OrchestratorParams:
     csf_iterations: int = 500
     csf_slope_smooth: bool = False
 
-    # Merging
+    # Cross-tile merging
     smart_merge_input_dir: Path = None
     smart_merge_tile_bounds_tindex: Path = None
 
@@ -79,156 +79,71 @@ class OrchestratorParams:
     area_shapefile: Path = None
 
     # Voxel-based green volume calculation
-    gv_input_path: Path = None
     gv_output_dir: Path = None
     gv_voxel_sizes: List[float] = field(default_factory=lambda: [0.1, 0.2, 0.3])
 
 
-def parse_cli_args() -> OrchestratorParams:
-    """
-    Parse CLI arguments and return an OrchestratorParams instance.
-    """
-    parser = argparse.ArgumentParser()
+def make_json_safe(obj):
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {k: make_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [make_json_safe(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [make_json_safe(v) for v in obj]
+    return obj
 
-    parser.add_argument("--input", required=True, type=Path,
-                    help="Input directory containing raw LAZ/LAS files.")
-    parser.add_argument("--output", required=True, type=Path,
-                        help="Output directory.")
-    parser.add_argument(
-        "--basic-tiling",
-        action="store_true",
-        help=(
-            "Use fast, basic tiling without cross-tile merging of segmentation results."
-            "For merged tree instance IDs, smart tiling is required."
-        ),
-    )
-    parser.add_argument("--skip-tiling", action="store_true")
-    parser.add_argument("--tile-length", type=int, default=30,
-                        help="Tiling parameter: Tile size in meters (default: 30).")
-    parser.add_argument("--tile-buffer", type=int, default=10,
-                        help="Tiling parameter: Buffer overlap in meters (default: 10).")
-    parser.add_argument("--skip-dimension-reduction", type=bool, default=False,
-                        help="Smart tile parameter: Set to False (default) to reduce to X, Y, Z only for ~37 percent file size reduction (useful for raw pre-segmentation data), set to True for keeping all dimensions (for post-segmentation data).")
-    
-    # py-rct arguments
-    parser.add_argument("--gradient", type=float, default=1.0,
-                        help="RCT parameter: Gradient threshold for terrain extraction (default: 1.0).")
-    parser.add_argument("--max-diameter", type=float, default=0.9,
-                        help="RCT parameter: Maximum diameter (m) for tree instance segmentation (default: 0.9).")
-    parser.add_argument("--crop-length", type=float, default=1.0,
-                        help="RCT parameter: Distance from branch tip to reconstruct QSM (default: 1.0).")
-    parser.add_argument("--distance-limit", type=float, default=1.0,
-                        help="RCT parameter: Maximum distance between neighbor points in a tree (default: 1.0).")
-    parser.add_argument("--height-min", type=float, default=2.0,
-                        help="RCT parameter: Minimum height counted as tree (default: 2.0).")
-    parser.add_argument("--girth-height-ratio", type=float, default=0.12,
-                        help="RCT parameter: Proportion of tree height to estimate trunk girth (default: 0.12).")
-    parser.add_argument("--global-taper", type=float, default=0.024,
-                        help="RCT parameter: Global taper value (diameter per length) (default: 0.024).")
-    parser.add_argument("--global-taper-factor", type=float, default=0.3,
-                        help="RCT parameter: Factor for global taper (0-1) (default: 0.3).")
-    parser.add_argument("--gravity-factor", type=float, default=0.3,
-                        help="RCT parameter: Preference for vertical trees (default: 0.3).")
-    parser.add_argument("-sd", "--split-distance", required=False, type=float, default=0.02,
-        help="RCT parameter: Smaller values produce more, finer splits; larger values produce fewer, coarser splits")
-    parser.add_argument("--branch-segmentation", action="store_true",
-                        help="RCT parameter: Segment per branch if set; otherwise per tree.")
-    # parser.add_argument("--grid-width", type=float, default=None,
-    #                     help="RCT parameter: Assumed grid width of point cloud for cropping (default: none).")
 
-    # CSF
-    parser.add_argument("--cloth-resolution", type=float, default=0.05,
-                        help="CSF parameter: Cloth resolution refers to the grid size of cloth which is use to cover the terrain. The bigger cloth resolution you have set, the coarser DTM you will get.")
-    parser.add_argument("--rigidness", type=int, choices=[1, 2, 3],    
-                        default=2, help=(
-                            "CSF parameter: Cloth rigidness preset controlling terrain type: "
-                            "1 = steep/rugged (soft cloth), 2 = relief (medium), "
-                            "3 = flat (rigid). Default: 2 (relief)."))
-    parser.add_argument("--time-step", type=float, default=0.65,
-                        help="CSF parameter: Simulation time step controlling how far the cloth moves per iteration. Larger values speed up convergence but may reduce stability; smaller values improve accuracy but require more iterations.")
-    parser.add_argument("--class-threshold", type=float, default=0.5,
-                        help="CSF parameter: Classification threshold refers to a threshold to classify the original point cloud into ground and non-ground parts based on the distances between original point cloud and the simulated terrain. 0.5 is adapted to most of scenes.")
-    parser.add_argument("--iterations", type=int, default=500,
-                        help="CSF parameter: Maximum iteration times of terrain simulation. 500 is enough for most of scenes.")
-    parser.add_argument("--slope-smooth", action="store_true",
-                        help="CSF parameter: Enable slope smoothing to improve ground detection in steep or rugged terrain. Helps reduce misclassification on sharp elevation changes.")
+def write_metadata(params: OrchestratorParams) -> Path:
+    params.output.mkdir(parents=True, exist_ok=True)
+    metadata_path = params.output / "run_metadata.json"
 
-    # area calculation arguments
-    parser.add_argument("-s","--shapefile", type=str,
-                    help="Shapefile used for cropping the point cloud to AOI.")
-    
-    # voxelization arguments
-    parser.add_argument("-v","--voxel-sizes", nargs="+", type=float, default=[0.1,0.2,0.3],
-                    help="List of voxel sizes used for voxelization of the point cloud.")
-    
-    parser.add_argument("--clear-segmentation-output",
-                        action="store_true", help=(
-                            "If True, intermediate segmentation files are deleted after processing, "
-                            "leaving only the final full segmentation results. "
-                            "Enable this to save disk space."))
+    data = asdict(params)
+    data = make_json_safe(data)
 
-    args = parser.parse_args()
+    data["run_started"] = datetime.now().isoformat()
+    data["argv"] = sys.argv
 
-    return OrchestratorParams(
-        input=args.input,
-        output=args.output,
-        basic_tiling=args.basic_tiling,
-        skip_tiling=args.skip_tiling,
-        clear_segmentation_output=args.clear_segmentation_output,
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
-        tile_output_dir=args.output / "tiles",
-        tile_length=args.tile_length,
-        tile_buffer=args.tile_buffer,
-        smart_tile_skip_dimension_reduction=args.skip_dimension_reduction,   
-
-        pyrct_output_dir=args.output / "rct_leaf_wood",
-        pyrct_gradient=args.gradient,
-        pyrct_max_diameter=args.max_diameter,
-        pyrct_crop_length=args.crop_length,
-        pyrct_distance_limit=args.distance_limit,
-        pyrct_height_min=args.height_min,
-        pyrct_girth_height_ratio=args.girth_height_ratio,
-        pyrct_global_taper=args.global_taper,
-        pyrct_global_taper_factor=args.global_taper_factor,
-        pyrct_gravity_factor=args.gravity_factor,
-        pyrct_split_distance=args.split_distance,
-        pyrct_branch_segmentation=args.branch_segmentation,
-        # pyrct_grid_width=args.grid_width,
-
-        csf_input_path=args.output / "rct_leaf_wood" / "segmented" / "laz",
-        csf_output_dir=args.output / "csf_ground",
-        csf_cloth_resolution=args.cloth_resolution,
-        csf_rigidness=args.rigidness,
-        csf_time_step=args.time_step,
-        csf_class_threshold=args.class_threshold,
-        csf_iterations=args.iterations,
-        csf_slope_smooth=args.slope_smooth,
-
-        smart_merge_input_dir= args.output / "results" / "segmented_laz",
-        smart_merge_tile_bounds_tindex= args.output / "tiles" / "tile_bounds_tindex.json",
-
-        area_shapefile=args.shapefile,
-
-        gv_input_path=args.output / "csf_ground" / "non_ground",
-        gv_output_dir=args.output / "results",
-        gv_voxel_sizes=args.voxel_sizes
-    )
-
+    return metadata_path
 
 def run_basic_tiling(input: str, output_dir: str, tile_length: int, buffer: int) -> list:
+    if os.path.isfile(input):
+        files = [input]
+    elif os.path.isdir(input):
+        files = sorted([
+            os.path.join(input, f)
+            for f in os.listdir(input)
+            if f.lower().endswith((".las", ".laz"))
+        ])
+
+        if not files:
+            raise ValueError("No LAS/LAZ files found in input directory.")
+    else:
+        raise ValueError("Input is neither a file nor a directory.")
+    
+    print(f"Tile length: {tile_length}m")
+    print(f"Tile buffer: {buffer}m")
+
     # Check that output directory exists
     if not os.path.exists(output_dir):
         # If not, create it
         os.makedirs(output_dir)
 
-    subprocess.run(
-        [
-            "pdal", "tile", input, str(output_dir /"tile_#.laz"), 
-            "--length", str(tile_length), 
-            "--buffer", str(buffer)
-        ],
-        check=True
-    )
+    for f in files:
+        filename = Path(f).stem
+
+        subprocess.run(
+            [
+                "pdal", "tile", f, str(output_dir / f"{filename}_tile_#.laz"), 
+                "--length", str(tile_length), 
+                "--buffer", str(buffer)
+            ],
+            check=True
+        )
 
     return output_dir
 
@@ -282,32 +197,177 @@ def create_fully_segmented_point_cloud(ground_dir:str, non_ground_dir:str, merge
     return merged_files
 
 
+def parse_cli_args() -> OrchestratorParams:
+    """
+    Parse CLI arguments and return an OrchestratorParams instance.
+    """
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--input", required=True, type=Path,
+                    help="Input directory containing raw LAZ/LAS files.")
+    parser.add_argument("--output", required=True, type=Path,
+                        help="Output directory.")
+    parser.add_argument(
+        "--task",
+        default="all",
+        help=("Task to perform: 'segmentation' (wood-leaf, ground and instance segmentation), 'voxelization' (voxel-based green volume calculation). Default is 'all'."),
+    )
+    parser.add_argument(
+        "--tiling",
+        default="skip",
+        help=("Tiling modes: 'basic' (fast, without cross-tile merging), 'smart' (with cross-tile merging of tree instance IDs and semantic segmentation results)"),
+    )
+    parser.add_argument("--tile-length", type=int, default=30,
+                        help="Tiling parameter: Tile size in meters (default: 30).")
+    parser.add_argument("--tile-buffer", type=int, default=10,
+                        help="Tiling parameter: Buffer overlap in meters (default: 10).")
+    parser.add_argument("--skip-dimension-reduction", type=bool, default=False,
+                        help="Smart tile parameter: Set to False (default) to reduce to X, Y, Z only for ~37 percent file size reduction (useful for raw pre-segmentation data), set to True for keeping all dimensions (for post-segmentation data).")
+    
+    # py-rct arguments
+    parser.add_argument("--gradient", type=float, default=1.0,
+                        help="RCT parameter: Gradient threshold for terrain extraction (default: 1.0).")
+    parser.add_argument("--max-diameter", type=float, default=0.9,
+                        help="RCT parameter: Maximum diameter (m) for tree instance segmentation (default: 0.9).")
+    parser.add_argument("--crop-length", type=float, default=1.0,
+                        help="RCT parameter: Distance from branch tip to reconstruct QSM (default: 1.0).")
+    parser.add_argument("--distance-limit", type=float, default=1.0,
+                        help="RCT parameter: Maximum distance between neighbor points in a tree (default: 1.0).")
+    parser.add_argument("--height-min", type=float, default=2.0,
+                        help="RCT parameter: Minimum height counted as tree (default: 2.0).")
+    parser.add_argument("--girth-height-ratio", type=float, default=0.12,
+                        help="RCT parameter: Proportion of tree height to estimate trunk girth (default: 0.12).")
+    parser.add_argument("--global-taper", type=float, default=0.024,
+                        help="RCT parameter: Global taper value (diameter per length) (default: 0.024).")
+    parser.add_argument("--global-taper-factor", type=float, default=0.3,
+                        help="RCT parameter: Factor for global taper (0-1) (default: 0.3).")
+    parser.add_argument("--gravity-factor", type=float, default=0.3,
+                        help="RCT parameter: Preference for vertical trees (default: 0.3).")
+    parser.add_argument("-sd", "--split-distance", required=False, type=float, default=0.02,
+        help="RCT parameter: Smaller values produce more, finer splits; larger values produce fewer, coarser splits")
+    parser.add_argument("--branch-segmentation", action="store_true",
+                        help="RCT parameter: Segment per branch if set; otherwise per tree.")
+    # parser.add_argument("--grid-width", type=float, default=None,
+    #                     help="RCT parameter: Assumed grid width of point cloud for cropping (default: none).")
+
+    # CSF arguments
+    parser.add_argument("--cloth-resolution", type=float, default=0.05,
+                        help="CSF parameter: Cloth resolution refers to the grid size of cloth which is use to cover the terrain. The bigger cloth resolution you have set, the coarser DTM you will get.")
+    parser.add_argument("--rigidness", type=int, choices=[1, 2, 3],    
+                        default=2, help=(
+                            "CSF parameter: Cloth rigidness preset controlling terrain type: "
+                            "1 = steep/rugged (soft cloth), 2 = relief (medium), "
+                            "3 = flat (rigid). Default: 2 (relief)."))
+    parser.add_argument("--time-step", type=float, default=0.65,
+                        help="CSF parameter: Simulation time step controlling how far the cloth moves per iteration. Larger values speed up convergence but may reduce stability; smaller values improve accuracy but require more iterations.")
+    parser.add_argument("--class-threshold", type=float, default=0.5,
+                        help="CSF parameter: Classification threshold refers to a threshold to classify the original point cloud into ground and non-ground parts based on the distances between original point cloud and the simulated terrain. 0.5 is adapted to most of scenes.")
+    parser.add_argument("--iterations", type=int, default=500,
+                        help="CSF parameter: Maximum iteration times of terrain simulation. 500 is enough for most of scenes.")
+    parser.add_argument("--slope-smooth", action="store_true",
+                        help="CSF parameter: Enable slope smoothing to improve ground detection in steep or rugged terrain. Helps reduce misclassification on sharp elevation changes.")
+
+    # area calculation arguments
+    parser.add_argument("-s","--shapefile", type=str,
+                    help="Shapefile used for cropping the point cloud to AOI.")
+    
+    # voxelization arguments
+    parser.add_argument("-v","--voxel-sizes", nargs="+", type=float, default=[0.1,0.2,0.3],
+                    help="List of voxel sizes used for voxelization of the point cloud.")
+    
+    parser.add_argument("--clear-segmentation-output",
+                        action="store_true", help=(
+                            "If True, intermediate segmentation files are deleted after processing, "
+                            "leaving only the final full segmentation results. "
+                            "Enable this to save disk space."))
+
+    args = parser.parse_args()
+
+    return OrchestratorParams(
+        input=args.input,
+        output=args.output,
+        task=args.task,
+        tiling=args.tiling,
+        clear_segmentation_output=args.clear_segmentation_output,
+
+        tile_output_dir=args.output / "tiles",
+        tile_length=args.tile_length,
+        tile_buffer=args.tile_buffer,
+        smart_tile_skip_dimension_reduction=args.skip_dimension_reduction,   
+
+        pyrct_output_dir=args.output / "rct_leaf_wood",
+        pyrct_gradient=args.gradient,
+        pyrct_max_diameter=args.max_diameter,
+        pyrct_crop_length=args.crop_length,
+        pyrct_distance_limit=args.distance_limit,
+        pyrct_height_min=args.height_min,
+        pyrct_girth_height_ratio=args.girth_height_ratio,
+        pyrct_global_taper=args.global_taper,
+        pyrct_global_taper_factor=args.global_taper_factor,
+        pyrct_gravity_factor=args.gravity_factor,
+        pyrct_split_distance=args.split_distance,
+        pyrct_branch_segmentation=args.branch_segmentation,
+        # pyrct_grid_width=args.grid_width,
+
+        csf_input_path=args.output / "rct_leaf_wood" / "segmented" / "laz",
+        csf_output_dir=args.output / "csf_ground",
+        csf_cloth_resolution=args.cloth_resolution,
+        csf_rigidness=args.rigidness,
+        csf_time_step=args.time_step,
+        csf_class_threshold=args.class_threshold,
+        csf_iterations=args.iterations,
+        csf_slope_smooth=args.slope_smooth,
+
+        smart_merge_input_dir= args.output / "results" / "segmented_laz",
+        smart_merge_tile_bounds_tindex= args.output / "tiles" / "tile_bounds_tindex.json",
+
+        area_shapefile=args.shapefile,
+
+        gv_output_dir=args.output / "results",
+        gv_voxel_sizes=args.voxel_sizes
+    )
+
 def main(params: OrchestratorParams):
+    if not params.task in ["segmentation", "voxelization", "all"]:
+        print(f"Error: Unknown task: {params.task}")
+        print("Valid tasks: all, segmentation, voxelization")
+        sys.exit(1)
+
     # Start timing
     start_time = time.time()
     start_datetime = datetime.now()
+
+    print("=" * 60)
+    print("Running TLS Green Volume Pipeline")
+    print("=" * 60)
+    print(f"Input directory: {params.input}")
+    print(f"Output directory: {params.output}")
+    print(f"Task: {params.task}")
+    print(f"Tiling: {params.tiling}")
     print(f"Processing started at {start_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+    print()
 
-    # Check that output directory exists
-    if not os.path.exists(params.output):
-        # If not, create it
-        os.makedirs(params.output)
+    # Ensure output dir exists
+    os.makedirs(params.output, exist_ok=True)
 
-    # ----------------------------------------------
-    # Step 1: Tiling
-    # ----------------------------------------------
-
-    if not params.skip_tiling:
+    if not params.task == "voxelization":
+        # Write metadata
+        metadata_path = write_metadata(params)
+        print(f"Run metadata written to {metadata_path}")
+        
+        # ----------------------------------------------
+        # Step 1: Tiling
+        # ----------------------------------------------
         print("\n" + "=" * 60)
         print("Tiling")
         print("=" * 60)
 
-        if params.basic_tiling:
+        if params.tiling == "basic":
             pyrct_input_path = run_basic_tiling(input=params.input, 
                                             output_dir=params.tile_output_dir,
                                             tile_length=params.tile_length,
                                             buffer=params.tile_buffer)
-        else:
+        elif params.tiling == "smart":
             smart_tile_params = Parameters(
                 input_dir=params.input,
                 output_dir=params.tile_output_dir,
@@ -320,119 +380,116 @@ def main(params: OrchestratorParams):
             run_tile_task(smart_tile_params)
 
             pyrct_input_path = params.tile_output_dir / "subsampled_res1"
-    
-    else: 
-        pyrct_input_path = params.input
+        else: 
+            print("skipped.")
+            pyrct_input_path = params.input
 
 
-    # ----------------------------------------------
-    # Step 2: Run py-rct for leaf-wood segmentation
-    # ----------------------------------------------
+        # -------------------------------------------
+        # Step 2: Semantic Segmentation
+        # -------------------------------------------
 
-    print("\n" + "=" * 60)
-    print("RayCloudTools")
-    print("=" * 60)
-
-    run_batch_segmentation(
-        in_dir=pyrct_input_path,
-        out_dir=params.pyrct_output_dir,
-        gradient=params.pyrct_gradient,
-        max_diameter=params.pyrct_max_diameter,
-        crop_length=params.pyrct_crop_length,
-        distance_limit=params.pyrct_distance_limit,
-        height_min=params.pyrct_height_min,
-        girth_height_ratio=params.pyrct_girth_height_ratio,
-        global_taper=params.pyrct_global_taper,
-        global_taper_factor=params.pyrct_global_taper_factor,
-        gravity_factor=params.pyrct_gravity_factor,
-        split_distance=params.pyrct_split_distance,
-        branch_segmentation=params.pyrct_branch_segmentation,
-        # pyrct_grid_width=args.grid_width
-    )
-
-
-    # ------------------------------
-    # Step 3: Ground classification
-    # ------------------------------
-
-    print("\n" + "=" * 60)
-    print("Cloth Simulation Filter")
-    print("=" * 60)
-
-    ground, non_ground = run_csf(
-        input_dir=params.csf_input_path, 
-        output_dir=params.csf_output_dir,
-        cloth_resolution=params.csf_cloth_resolution,
-        rigidness=params.csf_rigidness,
-        time_step=params.csf_time_step,
-        class_threshold=params.csf_class_threshold,
-        iterations=params.csf_iterations,
-        slope_smooth=params.csf_slope_smooth
-    )
-
-
-    # -------------------------------------------
-    # Step 4: Create fully segmented point cloud
-    # -------------------------------------------
-
-    print("\n" + "=" * 60)
-    print("Merge segmentation results")
-    print("=" * 60)
-    
-    # TODO
-    merged_dir = os.path.join(params.output, "results/segmented_laz")
-    os.makedirs(merged_dir, exist_ok=True)
-
-    segmented_point_clouds = create_fully_segmented_point_cloud(
-            ground_dir=ground, 
-            non_ground_dir=non_ground,
-            merged_dir=merged_dir
-        )
-
-
-    # ----------------------------------------------
-    # Step 5: Merging
-    # ----------------------------------------------
-
-    if not params.skip_tiling and not params.basic_tiling:
+        # RayCloudTools for leaf-wood segmentation
         print("\n" + "=" * 60)
-        print("Merge tiles")
+        print("RayCloudTools")
         print("=" * 60)
 
-        smart_tile_params = Parameters(
-            segmented_remapped_folder=params.smart_merge_input_dir,
-            original_input_dir=params.input,
-            tile_bounds_json=params.smart_merge_tile_bounds_tindex,
-            buffer=params.tile_buffer,
-            enable_volume_merge=False,
-            skip_merged_file=True
+        run_batch_segmentation(
+            in_dir=pyrct_input_path,
+            out_dir=params.pyrct_output_dir,
+            gradient=params.pyrct_gradient,
+            max_diameter=params.pyrct_max_diameter,
+            crop_length=params.pyrct_crop_length,
+            distance_limit=params.pyrct_distance_limit,
+            height_min=params.pyrct_height_min,
+            girth_height_ratio=params.pyrct_girth_height_ratio,
+            global_taper=params.pyrct_global_taper,
+            global_taper_factor=params.pyrct_global_taper_factor,
+            gravity_factor=params.pyrct_gravity_factor,
+            split_distance=params.pyrct_split_distance,
+            branch_segmentation=params.pyrct_branch_segmentation,
+            # pyrct_grid_width=args.grid_width
         )
 
-        run_merge_task(smart_tile_params)
+        # CSF for ground classification
+        print("\n" + "=" * 60)
+        print("Cloth Simulation Filter")
+        print("=" * 60)
+
+        ground, non_ground = run_csf(
+            input_dir=params.csf_input_path, 
+            output_dir=params.csf_output_dir,
+            cloth_resolution=params.csf_cloth_resolution,
+            rigidness=params.csf_rigidness,
+            time_step=params.csf_time_step,
+            class_threshold=params.csf_class_threshold,
+            iterations=params.csf_iterations,
+            slope_smooth=params.csf_slope_smooth
+        )
+
+        # Create fully segmented point clouds
+        print("\n" + "=" * 60)
+        print("Merge segmentation results")
+        print("=" * 60)
+
+        # TODO
+        merged_dir = os.path.join(params.output, "results/segmented_laz")
+        os.makedirs(merged_dir, exist_ok=True)
+
+        segmented_point_clouds = create_fully_segmented_point_cloud(
+                ground_dir=ground, 
+                non_ground_dir=non_ground,
+                merged_dir=merged_dir
+            )
+
+        # Cross-tile merging
+        if params.tiling == "smart":
+            print("\n" + "=" * 60)
+            print("Merge tiles")
+            print("=" * 60)
+
+            smart_tile_params = Parameters(
+                segmented_remapped_folder=params.smart_merge_input_dir,
+                original_input_dir=params.input,
+                tile_bounds_json=params.smart_merge_tile_bounds_tindex,
+                buffer=params.tile_buffer,
+                enable_volume_merge=False,
+                skip_merged_file=True
+            )
+
+            run_merge_task(smart_tile_params)
 
 
-    # ------------------------------
-    # Step 6: Calculate green volume
-    # ------------------------------
+    if not params.task == "segmentation":
+        # -----------------------------------
+        # Step 3: Calculate green volume
+        # -----------------------------------
+        print("\n" + "=" * 60)
+        print("Voxel-based green volume calculation")
+        print("=" * 60)
+        print(f"Voxel sizes: {params.gv_voxel_sizes}")
 
-    print("\n" + "=" * 60)
-    print("Voxel-based green volume calculation")
-    print("=" * 60)
+        if params.task == "voxelization":
+            input_path = params.input
+        elif params.task == "all":
+            input_path = params.input / "csf_ground" / "non_ground"
 
-    results = voxel_based_green_volume(
-        input_path=params.gv_input_path,
-        output_dir=params.gv_output_dir, 
-        voxel_sizes=params.gv_voxel_sizes, 
-        class_labels=[0,2], 
-        shapefile=params.area_shapefile if params.area_shapefile else None
-    )
+        results = voxel_based_green_volume(
+            input_path=input_path,
+            output_dir=params.gv_output_dir, 
+            voxel_sizes=params.gv_voxel_sizes, 
+            class_labels=[0,2], 
+            shapefile=params.area_shapefile if params.area_shapefile else None
+        )
+
+        print("\n" + f"Green volume results saved to {results}.")
+
 
     if params.clear_segmentation_output:
-        # Remove segmentation outputs
-        dirs_to_remove = [params.pyrct_output_dir, params.csf_output_dir]
-        for d in dirs_to_remove:
-            shutil.rmtree(d)
-
+        # Remove segmentation output
+        for d in [params.pyrct_output_dir, params.csf_output_dir]:
+            if d and d.is_dir():
+                shutil.rmtree(d)
 
     # End timing
     end_time = time.time()
@@ -443,7 +500,6 @@ def main(params: OrchestratorParams):
     print(f"Pipeline Complete ({end_datetime.strftime('%Y-%m-%d %H:%M:%S')})")
     print("=" * 60)
     print("\n" + f"Total processing time: {duration:.2f} seconds ({duration / 60:.2f} minutes)")
-    print("\n" + f"Results saved to {results}.")
 
 
 if __name__ == "__main__":
