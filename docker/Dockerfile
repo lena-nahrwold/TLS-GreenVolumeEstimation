@@ -23,7 +23,6 @@ RUN apt-get update && apt-get upgrade -y && \
     libegl1 libgl1 libgomp1 \
     python3-pip \
     python3-venv \
-    pdal \
     vim \
     curl && \
     rm -rf /var/lib/apt/lists/*
@@ -116,6 +115,7 @@ ENV PATH=${CONDA_DIR}/bin:${PATH}
 RUN mamba create -n appenv -c conda-forge -y \
     python=3.11 \
     gdal \
+    pdal \
     untwine \
     pip && \
     mamba clean --all -y
@@ -136,6 +136,9 @@ RUN /opt/conda/envs/appenv/bin/python -m pip install --no-cache-dir --upgrade pi
 
 # Make the env default
 ENV PATH=/opt/conda/envs/appenv/bin:/opt/conda/bin:$PATH
+
+ENV PROJ_LIB=/opt/conda/envs/appenv/share/proj
+ENV PROJ_DATA=/opt/conda/envs/appenv/share/proj
 
 # Set the working directory
 WORKDIR /workspace

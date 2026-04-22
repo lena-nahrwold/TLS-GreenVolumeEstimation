@@ -354,7 +354,7 @@ def main(params: OrchestratorParams):
         # Write metadata
         metadata_path = write_metadata(params)
         print(f"Run metadata written to {metadata_path}")
-        
+
         # ----------------------------------------------
         # Step 1: Tiling
         # ----------------------------------------------
@@ -433,14 +433,16 @@ def main(params: OrchestratorParams):
         print("=" * 60)
 
         # TODO
-        merged_dir = os.path.join(params.output, "results/segmented_laz")
-        os.makedirs(merged_dir, exist_ok=True)
+        merged_segmentation_dir = os.path.join(params.output, "results/segmented_laz")
+        os.makedirs(merged_segmentation_dir, exist_ok=True)
 
         segmented_point_clouds = create_fully_segmented_point_cloud(
                 ground_dir=ground, 
                 non_ground_dir=non_ground,
-                merged_dir=merged_dir
+                merged_dir=merged_segmentation_dir
             )
+        
+        print(f"Semantic segmentation results saved to {segmented_point_clouds}.")
 
         # Cross-tile merging
         if params.tiling == "smart":
@@ -472,7 +474,7 @@ def main(params: OrchestratorParams):
         if params.task == "voxelization":
             input_path = params.input
         elif params.task == "all":
-            input_path = params.input / "csf_ground" / "non_ground"
+            input_path = merged_segmentation_dir
 
         results = voxel_based_green_volume(
             input_path=input_path,
