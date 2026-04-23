@@ -209,5 +209,4 @@ __marimo__/
 *.laz
 *.ply
 *notes.txt
-/input/
-/output/
+/data
