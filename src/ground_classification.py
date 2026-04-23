@@ -100,7 +100,7 @@ def run_csf(
     cloth_resolution: float = 0.05,
     rigidness: int = 2,
     time_step: float = 0.65,
-    class_threshold: float = 0.5,
+    class_threshold: float = 0.02,
     iterations: int = 500,
     slope_smooth: bool = False
 ) -> Tuple[Path, Path]:
