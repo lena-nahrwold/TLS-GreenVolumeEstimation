@@ -36,8 +36,8 @@ class OrchestratorParams:
     input: Path = None
     output: Path = None
     task: str = "all"
-    tiling: str = "skip"
-    clear_segmentation_output: bool = False
+    tiling: bool = False
+    clear_output: bool = False
 
     # Tiling
     tile_output_dir: Path = None
@@ -45,6 +45,7 @@ class OrchestratorParams:
     tile_length: int = 30
     tile_buffer: int = 10
     smart_tile_skip_dimension_reduction: bool = False
+    smart_tile_workers: int = 4
 
     # py-rct
     pyrct_output_dir: Path = None
@@ -81,6 +82,7 @@ class OrchestratorParams:
     # Voxel-based green volume calculation
     gv_output_dir: Path = None
     gv_voxel_sizes: List[float] = field(default_factory=lambda: [0.1, 0.2, 0.3])
+    gv_dimension: str = 'PredSemantic'
 
 
 def make_json_safe(obj):
@@ -110,43 +112,6 @@ def write_metadata(params: OrchestratorParams) -> Path:
 
     return metadata_path
 
-def run_basic_tiling(input: str, output_dir: str, tile_length: int, buffer: int) -> list:
-    if os.path.isfile(input):
-        files = [input]
-    elif os.path.isdir(input):
-        files = sorted([
-            os.path.join(input, f)
-            for f in os.listdir(input)
-            if f.lower().endswith((".las", ".laz"))
-        ])
-
-        if not files:
-            raise ValueError("No LAS/LAZ files found in input directory.")
-    else:
-        raise ValueError("Input is neither a file nor a directory.")
-    
-    print(f"Tile length: {tile_length}m")
-    print(f"Tile buffer: {buffer}m")
-
-    # Check that output directory exists
-    if not os.path.exists(output_dir):
-        # If not, create it
-        os.makedirs(output_dir)
-
-    for f in files:
-        filename = Path(f).stem
-
-        subprocess.run(
-            [
-                "pdal", "tile", f, str(output_dir / f"{filename}_tile_#.laz"), 
-                "--length", str(tile_length), 
-                "--buffer", str(buffer)
-            ],
-            check=True
-        )
-
-    return output_dir
-
 
 def create_fully_segmented_point_cloud(ground_dir:str, non_ground_dir:str, merged_dir:str) -> str:
     ground_files = glob(os.path.join(ground_dir, "*_ground.laz"))
@@ -161,7 +126,8 @@ def create_fully_segmented_point_cloud(ground_dir:str, non_ground_dir:str, merge
             print(f"Skipping {base_name}, no matching non-ground file.")
             continue
 
-        merged_file = os.path.join(merged_dir, f"{base_name}_merged.laz")
+        clean_base = base_name.replace("_raycloud", "")
+        merged_file = os.path.join(merged_dir, f"{clean_base}.laz")
 
         ground = laspy.read(gf)
         nonground = laspy.read(ngf)
@@ -203,10 +169,18 @@ def parse_cli_args() -> OrchestratorParams:
     """
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--input", required=True, type=Path,
-                    help="Input directory containing raw LAZ/LAS files.")
-    parser.add_argument("--output", required=True, type=Path,
-                        help="Output directory.")
+    parser.add_argument(
+        "--input", 
+        required=True, 
+        type=Path,
+        help="Input directory containing raw LAZ/LAS files."
+    )
+    parser.add_argument(
+        "--output", 
+        required=True, 
+        type=Path,
+        help="Output directory."
+    )
     parser.add_argument(
         "--task",
         default="all",
@@ -214,15 +188,17 @@ def parse_cli_args() -> OrchestratorParams:
     )
     parser.add_argument(
         "--tiling",
-        default="skip",
-        help=("Tiling modes: 'basic' (fast, without cross-tile merging), 'smart' (with cross-tile merging of tree instance IDs and semantic segmentation results)"),
+        action="store_true",
+        help=("Activates the 3Dtrees Smart Tile pipeline (with cross-tile merging of tree instance IDs and semantic segmentation results). Use for re-tiling of existing tiles or for processing of very large point clouds."),
     )
     parser.add_argument("--tile-length", type=int, default=30,
                         help="Tiling parameter: Tile size in meters (default: 30).")
     parser.add_argument("--tile-buffer", type=int, default=10,
                         help="Tiling parameter: Buffer overlap in meters (default: 10).")
-    parser.add_argument("--skip-dimension-reduction", type=bool, default=False,
+    parser.add_argument("--skip-dimension-reduction", action="store_true",
                         help="Smart tile parameter: Set to False (default) to reduce to X, Y, Z only for ~37 percent file size reduction (useful for raw pre-segmentation data), set to True for keeping all dimensions (for post-segmentation data).")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Tiling parameter: Number of parallel workers for processing (default: 4).")
     
     # py-rct arguments
     parser.add_argument("--gradient", type=float, default=1.0,
@@ -274,12 +250,16 @@ def parse_cli_args() -> OrchestratorParams:
     # voxelization arguments
     parser.add_argument("-v","--voxel-sizes", nargs="+", type=float, default=[0.1,0.2,0.3],
                     help="List of voxel sizes used for voxelization of the point cloud.")
+    parser.add_argument("-d", "--dimension", default="PredSemantic", type=str,
+        help="Dimension name for semantic class labels, e.g. 'PredSemantic' or 'Classification'.")
     
-    parser.add_argument("--clear-segmentation-output",
-                        action="store_true", help=(
-                            "If True, intermediate segmentation files are deleted after processing, "
-                            "leaving only the final full segmentation results. "
-                            "Enable this to save disk space."))
+    parser.add_argument(
+        "--clear-output",
+        action="store_true", 
+        help=("If True, intermediate files are deleted after processing, "
+              "leaving only the final full segmentation results. "
+              "Enable this to save disk space.")
+    )
 
     args = parser.parse_args()
 
@@ -288,12 +268,13 @@ def parse_cli_args() -> OrchestratorParams:
         output=args.output,
         task=args.task,
         tiling=args.tiling,
-        clear_segmentation_output=args.clear_segmentation_output,
+        clear_output=args.clear_output,
 
-        tile_output_dir=args.output / "tiles",
+        tile_output_dir=args.output / "buffered_tiles",
         tile_length=args.tile_length,
         tile_buffer=args.tile_buffer,
-        smart_tile_skip_dimension_reduction=args.skip_dimension_reduction,   
+        smart_tile_skip_dimension_reduction=args.skip_dimension_reduction,
+        smart_tile_workers=args.workers,   
 
         pyrct_output_dir=args.output / "rct_leaf_wood",
         pyrct_gradient=args.gradient,
@@ -318,20 +299,30 @@ def parse_cli_args() -> OrchestratorParams:
         csf_iterations=args.iterations,
         csf_slope_smooth=args.slope_smooth,
 
-        smart_merge_input_dir= args.output / "results" / "segmented_laz",
-        smart_merge_tile_bounds_tindex= args.output / "tiles" / "tile_bounds_tindex.json",
+        smart_merge_tile_bounds_tindex= args.output / "buffered_tiles" / "tile_bounds_tindex.json",
 
         area_shapefile=args.shapefile,
 
         gv_output_dir=args.output / "results",
-        gv_voxel_sizes=args.voxel_sizes
+        gv_voxel_sizes=args.voxel_sizes,
+        gv_dimension=args.dimension
     )
 
 def main(params: OrchestratorParams):
+    # Check given parameters
     if not params.task in ["segmentation", "voxelization", "all"]:
         print(f"Error: Unknown task: {params.task}")
         print("Valid tasks: all, segmentation, voxelization")
         sys.exit(1)
+
+    if not Path(params.input).is_dir():
+        raise FileNotFoundError(f"Input directory does not exist: {params.input}")
+
+    if not Path(params.area_shapefile).is_file():
+        raise FileNotFoundError(f"Shapefile file does not exist: {params.area_shapefile}")
+    
+    # Ensure output dir exists
+    os.makedirs(params.output, exist_ok=True)
 
     # Start timing
     start_time = time.time()
@@ -347,9 +338,6 @@ def main(params: OrchestratorParams):
     print(f"Processing started at {start_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
     print()
 
-    # Ensure output dir exists
-    os.makedirs(params.output, exist_ok=True)
-
     if not params.task == "voxelization":
         # Write metadata
         metadata_path = write_metadata(params)
@@ -362,19 +350,14 @@ def main(params: OrchestratorParams):
         print("Tiling")
         print("=" * 60)
 
-        if params.tiling == "basic":
-            pyrct_input_path = run_basic_tiling(input=params.input, 
-                                            output_dir=params.tile_output_dir,
-                                            tile_length=params.tile_length,
-                                            buffer=params.tile_buffer)
-        elif params.tiling == "smart":
+        if params.tiling:
             smart_tile_params = Parameters(
                 input_dir=params.input,
                 output_dir=params.tile_output_dir,
                 tile_length=params.tile_length,
                 tile_buffer=params.tile_buffer,
                 skip_dimension_reduction=False,
-                workers=8 # TODO
+                workers=params.smart_tile_workers
             )
 
             run_tile_task(smart_tile_params)
@@ -442,16 +425,17 @@ def main(params: OrchestratorParams):
                 merged_dir=merged_segmentation_dir
             )
         
-        print(f"Semantic segmentation results saved to {segmented_point_clouds}.")
+        print(f"Semantic segmentation results saved to\n " + "\n ".join(segmented_point_clouds))
 
         # Cross-tile merging
-        if params.tiling == "smart":
+        if params.tiling:
             print("\n" + "=" * 60)
             print("Merge tiles")
             print("=" * 60)
 
             smart_tile_params = Parameters(
-                segmented_remapped_folder=params.smart_merge_input_dir,
+                segmented_remapped_folder=merged_segmentation_dir,
+                original_tiles_dir=params.tile_output_dir / "subsampled_res1",
                 original_input_dir=params.input,
                 tile_bounds_json=params.smart_merge_tile_bounds_tindex,
                 buffer=params.tile_buffer,
@@ -460,6 +444,28 @@ def main(params: OrchestratorParams):
             )
 
             run_merge_task(smart_tile_params)
+
+            # Clear output of tile merging step
+            results_dir = params.output / "results"
+            
+            orig_predictions_dir = results_dir / "original_with_predictions"
+            out_tiles_dir = results_dir / "output_tiles"
+            filtered_tiles_dir = out_tiles_dir / "filtered_tiles"
+            
+            if not orig_predictions_dir.is_dir():
+                raise FileNotFoundError(f"Missing directory after tile merge: {orig_predictions_dir}")
+            if not out_tiles_dir.is_dir():
+                raise FileNotFoundError(f"Missing directory after tile merge: {out_tiles_dir}")
+            
+            if Path(merged_segmentation_dir).exists():
+                shutil.rmtree(merged_segmentation_dir)
+            
+            if Path(filtered_tiles_dir).exists():
+                shutil.rmtree(filtered_tiles_dir)
+            
+            shutil.move(str(orig_predictions_dir), str(merged_segmentation_dir))
+            shutil.move(str(out_tiles_dir), str(Path(merged_segmentation_dir) / "segmented_buffered_tiles"))
+            
 
 
     if not params.task == "segmentation":
@@ -472,25 +478,32 @@ def main(params: OrchestratorParams):
         print(f"Voxel sizes: {params.gv_voxel_sizes}")
 
         if params.task == "voxelization":
-            input_path = params.input
+            gv_input_path = params.input
+            dimension = params.gv_dimension
         elif params.task == "all":
-            input_path = merged_segmentation_dir
+            gv_input_path = merged_segmentation_dir
+            if params.tiling:
+                dimension = '3DT_PredSemantic_SAT'
+            else:
+                dimension = 'PredSemantic'
 
         results = voxel_based_green_volume(
-            input_path=input_path,
+            input_path=gv_input_path,
             output_dir=params.gv_output_dir, 
             voxel_sizes=params.gv_voxel_sizes, 
-            class_labels=[0,2], 
+            dimension=dimension,
+            class_labels=[2,3], 
             shapefile=params.area_shapefile if params.area_shapefile else None
         )
 
-        print("\n" + f"Green volume results saved to {results}.")
-
-
-    if params.clear_segmentation_output:
+    if params.clear_output:
+        print("\n" + "=" * 60)
+        print("Clearing output directories")
+        print("=" * 60)
         # Remove segmentation output
         for d in [params.pyrct_output_dir, params.csf_output_dir]:
             if d and d.is_dir():
+                print(f"Removing {d}")
                 shutil.rmtree(d)
 
     # End timing
