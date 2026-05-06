@@ -81,7 +81,7 @@ def voxel_based_green_volume(
             extra_dims = set(point_format.extra_dimension_names)
 
             if dimension not in standard_dims and dimension not in extra_dims:
-                raise ValueError(f"Given dimension '{dimension}' not found in {f}.")
+                raise ValueError(f"Given dimension '{dimension}' not found in {f}. Available dimensions are \n standard dims: {standard_dims} \n extra dims: {extra_dims}")
 
             chunk_counter = 0
 
@@ -206,7 +206,7 @@ def main():
         help="Class labels: [overstory, understory]"
     )
     parser.add_argument(
-        "-s", "--area-size", type=float,
+        "--area-size", type=float,
         help="Area size for normalization (m²)."
     )
     parser.add_argument(
