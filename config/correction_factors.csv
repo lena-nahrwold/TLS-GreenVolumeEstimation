@@ -1,0 +1,10 @@
+layer,voxel_size,factor
+Total,0.1,0.98
+Total,0.2,0.97
+Total,0.3,0.95
+Crowns,0.1,0.91
+Crowns,0.2,0.90
+Crowns,0.3,0.89
+Low Vegetation,0.1,1.00
+Low Vegetation,0.2,0.96
+Low Vegetation,0.3,0.90

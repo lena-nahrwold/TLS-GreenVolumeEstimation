@@ -17,7 +17,6 @@ def to_o3d(points: np.ndarray) -> o3d.geometry.PointCloud:
     pcd.points = o3d.utility.Vector3dVector(points)
     return pcd
 
-
 def add_predsemantic_dimension(las: laspy.LasData):
     if "PredSemantic" in las.point_format.dimension_names:
         return 

@@ -1,11 +1,31 @@
 import argparse
 import os
+import csv
+from datetime import datetime
 
 import laspy
 import numpy as np
 from tqdm import tqdm
 
 from estimate_area_from_shp import estimate_area_from_shp
+
+def load_correction_factors(path: str) -> dict:
+    """
+    Load correction factors from a CSV/text file with columns:
+    layer,voxel_size,factor
+    Returns: {layer: {voxel_size: factor}}
+    """
+    factors = {}
+    with open(path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            layer = row["layer"]
+            v = float(row["voxel_size"])
+            c = float(row["factor"])
+            if layer not in factors:
+                factors[layer] = {}
+            factors[layer][v] = c
+    return factors
 
 
 def update_voxel_sets(coords, voxel_sizes, voxel_sets, origin):
@@ -35,6 +55,8 @@ def voxel_based_green_volume(
     area_size: float = None,
     shapefile: str = None,
     chunk_size: int = 2_000_000,
+    correction_file: str | None = None,
+    apply_correction: bool = True,
 ) -> str:
     if os.path.isfile(input_path):
         files = [input_path]
@@ -143,7 +165,40 @@ def voxel_based_green_volume(
         for key in keys
     }
 
-    output_file = os.path.join(output_dir, "green_volume.txt")
+    # Load correction factors if requested
+    correction_factors = None
+    green_volumes = aggregated
+    applied_factors = {key: {} for key in keys}
+
+    if apply_correction and correction_file is not None and os.path.isfile(correction_file):
+        print(f"Loading correction factors from: {correction_file}")
+        correction_factors = load_correction_factors(correction_file)
+
+        corrected = {}
+        for key in keys:
+            vols = green_volumes[key].copy()
+            for i, voxel_size in enumerate(voxel_sizes):
+                factor = 1.0
+                if key in correction_factors and voxel_size in correction_factors[key]:
+                    factor = correction_factors[key][voxel_size]
+                    vols[i] *= factor
+                applied_factors[key][voxel_size] = factor
+            corrected[key] = vols
+
+        green_volumes = corrected
+
+    elif apply_correction:
+        print("No correction file provided or found; volumes will not be bias-corrected.")
+        for key in keys:
+            for voxel_size in voxel_sizes:
+                applied_factors[key][voxel_size] = 1.0
+    else:
+        for key in keys:
+            for voxel_size in voxel_sizes:
+                applied_factors[key][voxel_size] = 1.0
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = os.path.join(output_dir, f"green_volume_{timestamp}.txt")
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     lines = []
@@ -154,21 +209,32 @@ def voxel_based_green_volume(
     lines.append("")
 
     for key in keys:
-        volumes = aggregated[key]
+        volumes = green_volumes[key]
         mean_volume, std_volume, cv = summarize_volumes(volumes)
 
         lines.append(f"===== {key.upper()} =====")
-        for v, vol in zip(voxel_sizes, volumes):
+        for voxel_size, vol in zip(voxel_sizes, volumes):
             vpa = vol / area_size if area_size else None
             vpa_str = f"{vpa:.3f}" if vpa is not None else "N/A"
             lines.append(
-                f"Voxel size = {v} m → Volume = {vol:.6f} m³ → Volume per area = {vpa_str} m³/m²"
+                f"Voxel size = {voxel_size} m → Volume = {vol:.3f} m³ → Volume per area = {vpa_str} m³/m²"
             )
 
         lines.append("----- Summary over voxel sizes -----")
-        lines.append(f"Mean volume = {mean_volume:.6f} m³")
-        lines.append(f"Std dev     = {std_volume:.6f} m³")
-        lines.append(f"CV          = {cv:.4f} ({cv*100:.2f} %)")
+        lines.append(f"Mean volume = {mean_volume:.3f} m³")
+        lines.append(f"Std dev     = {std_volume:.3f} m³")
+        lines.append(f"CV          = {cv:.3f} ({cv*100:.2f} %)")
+        lines.append("")
+
+    lines.append("===== Correction Factors =====")
+    lines.append(f"Correction enabled: {apply_correction}")
+    if apply_correction:
+        lines.append(f"Correction file: {correction_file if correction_file else 'None'}")
+        for key in keys:
+            lines.append(f"{key}:")
+            for voxel_size in voxel_sizes:
+                factor = applied_factors[key][voxel_size]
+                lines.append(f"  voxel size = {voxel_size} m -> factor = {factor:.2f}")
         lines.append("")
     
     result_text = "\n".join(lines)
@@ -217,6 +283,14 @@ def main():
         "--chunk-size", type=int, default=2_000_000,
         help="Number of points to read per chunk."
     )
+    parser.add_argument(
+        "--correction-file", type=str,
+        help="CSV file with correction factors: layer,voxel_size,factor"
+    )
+    parser.add_argument(
+        "--no-correction", action="store_true",
+        help="Disable application of correction factors."
+    )
 
     args = parser.parse_args()
 
@@ -228,7 +302,9 @@ def main():
         class_labels=np.array(args.class_label),
         area_size=args.area_size if args.area_size else None,
         shapefile=args.shapefile if args.shapefile else None,
-        chunk_size=args.chunk_size
+        chunk_size=args.chunk_size,
+        correction_file=args.correction_file,
+        apply_correction=not args.no_correction
     )
 
 
