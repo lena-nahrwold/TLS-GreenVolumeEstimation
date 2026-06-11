@@ -65,8 +65,6 @@ python3 run.py \
 
 ## 3. Tiling parameters
 
-These parameters control tiling when `--tiling basic` or `--tiling smart` is used.
-
 - `--tile-length INT` (default: `30`)  
   Tile size in meters.
 
@@ -289,7 +287,7 @@ python3 run.py \
   --input /path/to/raw_las_laz \
   --output /path/to/output_full \
   --task all \
-  --tiling smart \
+  --tiling \
   --tile-length 30 \
   --tile-buffer 10 \
   --gradient 1.0 \
@@ -328,6 +326,15 @@ python3 crop_point_cloud.py \
   --shapefile /path/to/aoi.shp
 ```
 
+### Local Installation
+To setup the pipeline with a local installation, clone this repository, install RayCloudTools (and TreeTools) following the instructions in the [RayCloudTools repository](https://github.com/csiro-robotics/raycloudtools) and run:
+
+```
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
 ## Docker usage
 
 ### Build the Docker image
@@ -337,50 +344,7 @@ From the repository root:
 ```bash
 sudo docker build -t tls-green-volume -f docker/Dockerfile .
 ```
+Adjust the `run_docker_pipeline.sh`, `run_docker_segmentation.sh`, `run_docker_voxelization.sh` scripts.
 
-### `run_docker.sh` script
-
-Edit `run_docker.sh` to wrap the `docker run` call:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Edit these three paths to point to your local data directories
-INPUT_DIR="/absolute/path/to/tls_laz"
-OUTPUT_DIR="/absolute/path/to/output"
-SHAPEFILE="/absolute/path/to/aoi/aoi.shp"
-
-# Optional: additional pipeline arguments
-# Example: EXTRA_ARGS="--basic-tiling --voxel-sizes 0.1 0.2"
-EXTRA_ARGS=""
-
-docker run --rm -it \
-  -v "$PWD/py-rct:/py-rct" \
-  -v "$PWD/src:/src" \
-  -v "$INPUT_DIR:/data/input" \
-  -v "$OUTPUT_DIR:/data/output" \
-  -v "$(dirname "$SHAPEFILE"):/data/aoi:ro" \
-  tls-green-volume \
-  python -u /src/run.py \
-    --input /data/input \
-    --output /data/output \
-    --shapefile "/data/aoi/$(basename "$SHAPEFILE")" \
-    $EXTRA_ARGS
-```
-
-Make it executable:
-
-```bash
-chmod +x run_docker.sh
-```
-
-Then run:
-
-```bash
-./run_docker.sh
-```
-
-Adjust the container command (`python /src/run.py`) and mount points if your Dockerfile uses a different working directory or entrypoint.
 
 ## References

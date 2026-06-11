@@ -2,8 +2,8 @@ laspy
 open3d
 cloth-simulation-filter
 geopandas
-
-
+psutil
+scipy
 gdal==3.8.4
 lazrs
 pydantic 
