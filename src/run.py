@@ -20,11 +20,8 @@ from datetime import datetime
 
 os.environ['LC_ALL'] = 'C'
 
-sys.path.append(os.path.abspath("/3dtrees_Smart_Tile/src"))
-sys.path.append(os.path.abspath("/py-rct/src"))
+sys.path.append(os.path.abspath("py-rct/src"))
 
-from trees_smart_tile.run import run_tile_task, run_merge_task
-from trees_smart_tile.parameters import Parameters
 from py_rct.rayextract import run_batch_segmentation, run_raycloudtools_segmentation_steps
 
 from ground_classification import run_csf
@@ -40,12 +37,13 @@ class OrchestratorParams:
     clear_output: bool = False
 
     # Tiling
-    tile_output_dir: Path = None
-    tile_original_dir: Path = None
-    tile_length: int = 30
-    tile_buffer: int = 10
+    smart_tile_output_dir: Path = None
+    smart_tile_length: int = 30
+    smart_tile_buffer: int = 10
     smart_tile_skip_dimension_reduction: bool = False
     smart_tile_workers: int = 4
+    smart_tile_resolution_1: float = 0.01
+    smart_tile_resolution_2: float = 0.1
 
     # py-rct
     pyrct_output_dir: Path = None
@@ -72,17 +70,14 @@ class OrchestratorParams:
     csf_iterations: int = 500
     csf_slope_smooth: bool = False
 
-    # Cross-tile merging
-    smart_merge_input_dir: Path = None
-    smart_merge_tile_bounds_tindex: Path = None
-
     # AOI area estimation
     area_shapefile: Path = None
 
     # Voxel-based green volume calculation
     gv_output_dir: Path = None
     gv_voxel_sizes: List[float] = field(default_factory=lambda: [0.1, 0.2, 0.3])
-    gv_dimension: str = 'PredSemantic'
+    gv_dimension: str = 'PredSemantic',
+    gv_correction_file: Path = None
 
 
 def make_json_safe(obj):
@@ -199,6 +194,10 @@ def parse_cli_args() -> OrchestratorParams:
                         help="Smart tile parameter: Set to False (default) to reduce to X, Y, Z only for ~37 percent file size reduction (useful for raw pre-segmentation data), set to True for keeping all dimensions (for post-segmentation data).")
     parser.add_argument("--workers", type=int, default=4,
                         help="Tiling parameter: Number of parallel workers for processing (default: 4).")
+    parser.add_argument("--resolution-1", type=float, default=0.01,
+        help="First subsampling resolution in meters for the tile task.")
+    parser.add_argument("--resolution-2", type=float, default=0.1,
+        help="First subsampling resolution in meters for the tile task.")
     
     # py-rct arguments
     parser.add_argument("--gradient", type=float, default=1.0,
@@ -252,6 +251,10 @@ def parse_cli_args() -> OrchestratorParams:
                     help="List of voxel sizes used for voxelization of the point cloud.")
     parser.add_argument("-d", "--dimension", default="PredSemantic", type=str,
         help="Dimension name for semantic class labels, e.g. 'PredSemantic' or 'Classification'.")
+    parser.add_argument(
+        "--correction-file", type=str,
+        help="CSV file with correction factors for GV estimation: layer,voxel_size,factor"
+    )
     
     parser.add_argument(
         "--clear-output",
@@ -270,9 +273,11 @@ def parse_cli_args() -> OrchestratorParams:
         tiling=args.tiling,
         clear_output=args.clear_output,
 
-        tile_output_dir=args.output / "buffered_tiles",
-        tile_length=args.tile_length,
-        tile_buffer=args.tile_buffer,
+        smart_tile_output_dir=args.output / "retile",
+        smart_tile_length=args.tile_length,
+        smart_tile_buffer=args.tile_buffer,
+        smart_tile_resolution_1=args.resolution_1,
+        smart_tile_resolution_2=args.resolution_2,
         smart_tile_skip_dimension_reduction=args.skip_dimension_reduction,
         smart_tile_workers=args.workers,   
 
@@ -299,13 +304,12 @@ def parse_cli_args() -> OrchestratorParams:
         csf_iterations=args.iterations,
         csf_slope_smooth=args.slope_smooth,
 
-        smart_merge_tile_bounds_tindex= args.output / "buffered_tiles" / "tile_bounds_tindex.json",
-
         area_shapefile=args.shapefile,
 
         gv_output_dir=args.output / "results",
         gv_voxel_sizes=args.voxel_sizes,
-        gv_dimension=args.dimension
+        gv_dimension=args.dimension,
+        gv_correction_file=args.correction_file
     )
 
 def main(params: OrchestratorParams):
@@ -351,18 +355,26 @@ def main(params: OrchestratorParams):
         print("=" * 60)
 
         if params.tiling:
-            smart_tile_params = Parameters(
-                input_dir=params.input,
-                output_dir=params.tile_output_dir,
-                tile_length=params.tile_length,
-                tile_buffer=params.tile_buffer,
-                skip_dimension_reduction=False,
-                workers=params.smart_tile_workers
-            )
+            cmd = [
+                "python", "3dtrees_Smart_Tile/src/run.py",
+                "--task", "tile",
+                "--input-dir", str(params.input),
+                "--output-dir", str(params.smart_tile_output_dir),
+                "--workers", str(params.smart_tile_workers),
+                "--tile-length", str(params.smart_tile_length),
+                "--tile-buffer", str(params.smart_tile_buffer),
+                "--resolution-1", str(params.smart_tile_resolution_1),
+                "--resolution-2", str(params.smart_tile_resolution_2),
+                "--output-copc-res1", "False",
+                "--dimension-reduction", "False"
+            ]
 
-            run_tile_task(smart_tile_params)
+            result = subprocess.run(cmd, text=True)
 
-            pyrct_input_path = params.tile_output_dir / "subsampled_res1"
+            if result.returncode != 0:
+                raise RuntimeError(f"Tile task failed with code {result.returncode}")
+
+            pyrct_input_path = params.smart_tile_output_dir / "subsampled_res1"
         else: 
             print("skipped.")
             pyrct_input_path = params.input
@@ -415,7 +427,6 @@ def main(params: OrchestratorParams):
         print("Merge segmentation results")
         print("=" * 60)
 
-        # TODO
         merged_segmentation_dir = os.path.join(params.output, "results/segmented_laz")
         os.makedirs(merged_segmentation_dir, exist_ok=True)
 
@@ -433,38 +444,48 @@ def main(params: OrchestratorParams):
             print("Merge tiles")
             print("=" * 60)
 
-            smart_tile_params = Parameters(
-                segmented_remapped_folder=merged_segmentation_dir,
-                original_tiles_dir=params.tile_output_dir / "subsampled_res1",
-                original_input_dir=params.input,
-                tile_bounds_json=params.smart_merge_tile_bounds_tindex,
-                buffer=params.tile_buffer,
-                enable_volume_merge=False,
-                skip_merged_file=True
-            )
+            """
+            source_dir = Path(params.pyrct_output_dir) / "trees"
+            target_dir = Path(merged_segmentation_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
 
-            run_merge_task(smart_tile_params)
+            for txt_file in source_dir.glob("*_trees.txt"):
+                shutil.copy2(txt_file, target_dir / txt_file.name)
+            """
+
+            cmd = [
+                "python", "3dtrees_Smart_Tile/src/run.py",
+                "--task", "filter",
+                "--segmented-folders", str(merged_segmentation_dir),
+                "--original-input-dir", str(params.input),
+                "--remap-merge", "True",
+                "--produce-merged-file", "False"
+            ]
+
+            result = subprocess.run(cmd, text=True)
+
+            if result.returncode != 0:
+                raise RuntimeError(f"Filter/Remap task failed with code {result.returncode}")
 
             # Clear output of tile merging step
-            results_dir = params.output / "results"
+            filtered_results_dir = params.output / "results" / "filtered"
             
-            orig_predictions_dir = results_dir / "original_with_predictions"
-            out_tiles_dir = results_dir / "output_tiles"
-            filtered_tiles_dir = out_tiles_dir / "filtered_tiles"
+            orig_predictions_dir = filtered_results_dir / "original_with_predictions"
+            filtered_tiles_dir = filtered_results_dir / "filtered_tiles"
             
             if not orig_predictions_dir.is_dir():
                 raise FileNotFoundError(f"Missing directory after tile merge: {orig_predictions_dir}")
-            if not out_tiles_dir.is_dir():
-                raise FileNotFoundError(f"Missing directory after tile merge: {out_tiles_dir}")
+            if not filtered_tiles_dir.is_dir():
+                raise FileNotFoundError(f"Missing directory after tile merge: {filtered_tiles_dir}")
             
             if Path(merged_segmentation_dir).exists():
                 shutil.rmtree(merged_segmentation_dir)
-            
-            if Path(filtered_tiles_dir).exists():
-                shutil.rmtree(filtered_tiles_dir)
-            
+
             shutil.move(str(orig_predictions_dir), str(merged_segmentation_dir))
-            shutil.move(str(out_tiles_dir), str(Path(merged_segmentation_dir) / "segmented_buffered_tiles"))
+            shutil.move(str(filtered_tiles_dir), str(Path(merged_segmentation_dir) / "segmented_buffered_tiles"))
+            
+            if Path(filtered_results_dir).exists():
+                shutil.rmtree(filtered_results_dir)
             
 
 
@@ -482,10 +503,7 @@ def main(params: OrchestratorParams):
             dimension = params.gv_dimension
         elif params.task == "all":
             gv_input_path = merged_segmentation_dir
-            if params.tiling:
-                dimension = '3DT_PredSemantic_SAT'
-            else:
-                dimension = 'PredSemantic'
+            dimension = 'PredSemantic'
 
         results = voxel_based_green_volume(
             input_path=gv_input_path,
@@ -493,7 +511,8 @@ def main(params: OrchestratorParams):
             voxel_sizes=params.gv_voxel_sizes, 
             dimension=dimension,
             class_labels=[2,3], 
-            shapefile=params.area_shapefile if params.area_shapefile else None
+            shapefile=params.area_shapefile if params.area_shapefile else None,
+            correction_file=params.gv_correction_file
         )
 
     if params.clear_output:
