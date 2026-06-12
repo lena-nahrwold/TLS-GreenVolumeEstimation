@@ -20,7 +20,7 @@ from datetime import datetime
 
 os.environ['LC_ALL'] = 'C'
 
-sys.path.append(os.path.abspath("py-rct/src"))
+sys.path.append(os.path.abspath("../py-rct/src"))
 
 from py_rct.rayextract import run_batch_segmentation, run_raycloudtools_segmentation_steps
 
@@ -322,9 +322,13 @@ def main(params: OrchestratorParams):
     if not Path(params.input).is_dir():
         raise FileNotFoundError(f"Input directory does not exist: {params.input}")
 
-    if not Path(params.area_shapefile).is_file():
-        raise FileNotFoundError(f"Shapefile file does not exist: {params.area_shapefile}")
-    
+    if params.area_shapefile:
+        shp = Path(params.area_shapefile)
+        required = [shp, shp.with_suffix(".shx"), shp.with_suffix(".dbf")]
+        missing = [str(p) for p in required if not p.is_file()]
+        if missing:
+            raise FileNotFoundError(f"Missing shapefile component(s): {', '.join(missing)}")
+        
     # Ensure output dir exists
     os.makedirs(params.output, exist_ok=True)
 
