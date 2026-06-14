@@ -19,8 +19,8 @@ EXTRA_ARGS="--task all \
             --clear-output"
 
 docker run --rm -it \
-  -v "$PWD/3dtrees_Smart_Tile:/workspace/3dtrees_Smart_Tile" \
-  -v "$PWD/py-rct:/workspace/py-rct" \
+  -v "$PWD/3dtrees_Smart_Tile:/3dtrees_Smart_Tile" \
+  -v "$PWD/py-rct:/py-rct" \
   -v "$PWD/src:/src" \
   -v "$INPUT_DIR:/data/input" \
   -v "$OUTPUT_DIR:/data/output" \

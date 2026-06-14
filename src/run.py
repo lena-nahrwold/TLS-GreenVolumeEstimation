@@ -20,7 +20,7 @@ from datetime import datetime
 
 os.environ['LC_ALL'] = 'C'
 
-sys.path.append(os.path.abspath("../py-rct/src"))
+sys.path.append(os.path.abspath("py-rct/src"))
 
 from py_rct.rayextract import run_batch_segmentation, run_raycloudtools_segmentation_steps
 

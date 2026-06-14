@@ -140,11 +140,8 @@ ENV PATH=/opt/conda/envs/appenv/bin:/opt/conda/bin:$PATH
 ENV PROJ_LIB=/opt/conda/envs/appenv/share/proj
 ENV PROJ_DATA=/opt/conda/envs/appenv/share/proj
 
-# Set the working directory
-WORKDIR /workspace
-
-COPY 3dtrees_Smart_Tile 3dtrees_Smart_Tile
-COPY py-rct py-rct
+COPY 3dtrees_Smart_Tile /3dtrees_Smart_Tile
+COPY py-rct /py-rct
 COPY src /src
 
 CMD ["/bin/bash"]
